@@ -25,7 +25,8 @@ its own.
 
 Full methodology and results live in [`docs/opencode-local.md`](docs/opencode-local.md)
 (the master doc), with config best-practices in
-[`docs/opencode-config.md`](docs/opencode-config.md) and the background research
+[`docs/opencode-config.md`](docs/opencode-config.md), the complete tracing setup
+in [`docs/jaeger-tracing.md`](docs/jaeger-tracing.md), and the background research
 in [`docs/local-model-throughput-research.md`](docs/local-model-throughput-research.md),
 [`docs/local-inference-engines-research.md`](docs/local-inference-engines-research.md),
 [`docs/small-model-research.md`](docs/small-model-research.md), and

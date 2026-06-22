@@ -183,6 +183,10 @@ session / llm / tool **spans** over OTLP to a local **Jaeger**, all on
 `127.0.0.1` — no egress. `make mlx-up` brings the whole thing up; to run the
 tracing backend on its own use `make mlx-jaeger-up` / `make mlx-jaeger-down`.
 
+> **Full setup guide:** [`jaeger-tracing.md`](jaeger-tracing.md) — installing
+> Jaeger (binary or Docker), the custom plugins/patches required, the complete
+> env-var reference, and troubleshooting. The section below is the rationale.
+
 ```bash
 make mlx-jaeger-up         # start Jaeger (OTLP :4318/:4317, UI :16686) + write env
 source ~/.config/opencode-optimisations/opencode-otel.env   # before launching opencode
