@@ -1,0 +1,3 @@
+project notes
+the unique sentinel token is SENTINEL_TOKEN_4710
+end of notes

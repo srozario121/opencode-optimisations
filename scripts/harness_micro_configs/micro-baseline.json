@@ -1,0 +1,11 @@
+{
+  "name": "micro-baseline",
+  "description": "Item-8/13 default harness, faithfully cloned from the installed global ~/.config/opencode (item-12 tools map + mlx-gemma-rules.md instructions + coding-discipline skill + repo custom read/grep tools). No lever overrides. This is the bar every micro lever must beat on the fractional signal metric.",
+  "sampling": {},
+  "env": {},
+  "system_prompt": null,
+  "rules": null,
+  "skill": null,
+  "tools_variant": "default",
+  "opencode_config": {}
+}

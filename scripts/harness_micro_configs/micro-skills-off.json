@@ -1,0 +1,11 @@
+{
+  "name": "micro-skills-off",
+  "description": "Lever 2 (skill): disable the on-demand coding-discipline skill (MLX_SKILLS=0 equivalent) — removes the skill body + the skills.paths registration from the cloned config. Measures whether the skill's presence helps or hurts tool-call fidelity, and doubles as the regression guard for [[opencode-skills-drops-edit]]: with skills off, the write-capable tools (edit/write/list) must still be present and usable (asserted by the t1-edit / t1-write / t3-* checks).",
+  "sampling": {},
+  "env": {},
+  "system_prompt": null,
+  "rules": null,
+  "skill": {"enabled": false},
+  "tools_variant": "default",
+  "opencode_config": {}
+}

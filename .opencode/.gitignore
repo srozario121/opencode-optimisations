@@ -1,0 +1,7 @@
+# Installed by `bun install` / `npm install` (see ../README.md quick-start).
+# package.json IS committed here so the install step is reproducible — unlike in
+# the originating `admin` repo, where the whole .opencode setup was generated
+# and package.json was gitignored.
+node_modules
+bun.lock
+package-lock.json

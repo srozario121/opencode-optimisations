@@ -1,0 +1,14 @@
+{
+  "name": "prune-context",
+  "description": "L4 (research rank 4): stale-tool-output pruning. Enable compaction.prune (default false) so old tool observations are shed from the tiny context window, with a reserved buffer so compaction itself doesn't overflow. Effect may be muted on this subset (pre-screened <30K context to dodge the OOM cliff) — tested with tempered expectations.",
+  "opencode_config": {
+    "compaction": {
+      "auto": true,
+      "prune": true,
+      "reserved": 2000
+    }
+  },
+  "env": {},
+  "sampling": {},
+  "system_prompt": null
+}

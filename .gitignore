@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# uv
+# (uv.lock IS committed for reproducibility)
+
+# opencode custom-tool deps (installed via bun/npm in .opencode/)
+.opencode/node_modules/
+
+# logs / local run artifacts
+logs/
+
+# macOS
+.DS_Store

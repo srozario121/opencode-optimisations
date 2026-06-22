@@ -1,0 +1,10 @@
+{
+  "name": "low-temp",
+  "description": "L2 (research rank 2): greedy decoding. Set temperature 0.0 (vs the item-8 default) to harden the fragile Gemma-4 tool-call path and make pass/fail scoring deterministic. Greedy/near-greedy is the function-calling standard (BFCL temp=0.001). Forwarded to the openai-compatible provider via the model's options.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {
+    "temperature": 0.0
+  },
+  "system_prompt": null
+}

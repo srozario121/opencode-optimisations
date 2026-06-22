@@ -1,0 +1,11 @@
+{
+  "name": "micro-terse-prompt",
+  "description": "Lever 1 (system prompt): replace opencode's long frontier-tuned default build-agent prompt with a terse, model-appropriate one focused on a tight tool-call loop (a per-agent prompt REPLACES, not appends). Tests whether a shorter, tool-forward prompt improves the small model's tool-call fidelity vs the default. Must keep tool guidance so calls don't regress (item-11 round-trip veto + edit/write regression guard still apply).",
+  "sampling": {},
+  "env": {},
+  "system_prompt": "You are a coding agent operating in a local code repository through tools. Do exactly what the user asks, then stop.\n\nRules:\n- Prefer tool calls over prose. Emit one well-formed tool call at a time.\n- Available tools: `read` (args: filePath, optional offset+limit), `grep` (args: pattern, optional path/include), `glob` (args: pattern), `list`, `edit` (args: filePath, oldString, newString), `write` (args: filePath, content), `bash` (args: command).\n- ALWAYS read a file (a bounded range via offset/limit) before editing it. Edit source files only; never touch test files.\n- Make the smallest change that satisfies the request. Do not refactor unrelated code.\n- When the task is done and saved, give a one-line summary and stop. Do not ask questions.\n\nBe concise. Think briefly, then act.",
+  "rules": null,
+  "skill": null,
+  "tools_variant": "default",
+  "opencode_config": {}
+}

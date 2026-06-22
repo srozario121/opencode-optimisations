@@ -1,0 +1,11 @@
+{
+  "name": "micro-verbose-tooldesc",
+  "description": "Lever 3 (tool descriptions + parameter surface): swap the custom read/grep tools for the `verbose` variant under scripts/harness_micro_tools/verbose/ — identical behaviour, but the tool descriptions spell out the parameters and give a worked example (e.g. read offset/limit, grep pattern). Tests whether a more explicit description/param surface improves the small model's call fidelity (fewer missing offset/limit, fewer malformed patterns) vs the terse baseline descriptions.",
+  "sampling": {},
+  "env": {},
+  "system_prompt": null,
+  "rules": null,
+  "skill": null,
+  "tools_variant": "verbose",
+  "opencode_config": {}
+}

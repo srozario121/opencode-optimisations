@@ -1,0 +1,120 @@
+{
+  "_comment": "Frozen synthetic micro-test suite for TODO item 14. v5 (2026-06-22): focused on READ-PRECISION + SEARCH, the only non-saturated, lever-sensitive dimensions on this model. v1-v3 established that Gemma-4B QAT aces file-editing (v3 tier-3 = 24/24: micro-edits, multi-edits, 4-site cross-file renames, no-op restraint), so outcome-only edit checks just pin the aggregate near 0.9. The discriminating signal lives in (a) single-shot grep (reliably times out), and (b) reading a TIGHT window around the right function rather than the whole file. v4 is built almost entirely from those: navigate to one of many similar store.py apply_* functions and read a tight range (exact-ish offset + small limit + a limit MUST be present so a whole-file read fails), and grep->read chains. This is principled and lever-aligned: read-range discipline + search are exactly what the resident rules / coding-discipline skill / read+grep tool descriptions target (items 12-13). Defensible thresholds: a function is 3-6 lines on a ~54-line file, so limit<=8 is a tight window (tightened from v4's 10 to reach ~50% baseline; a 3-6 line function still fits) and reading the whole file fails. store.py refs: apply_tax=14 apply_discount=19 apply_coupon=24 apply_surcharge=29 shipping_cost=34 round_money=41 format_price=46 order_total=51.",
+  "fixture_root": "repo",
+  "tests": [
+    {
+      "id": "t1-grep",
+      "tier": 1,
+      "prompt": "Which file in this project contains the token SENTINEL_TOKEN_4710?",
+      "edits": false,
+      "checks": [
+        {"kind": "called", "tool": "grep"},
+        {"kind": "well_formed", "tool": "grep"},
+        {"kind": "arg_contains", "tool": "grep", "arg": "pattern", "value": "SENTINEL_TOKEN_4710"}
+      ]
+    },
+    {
+      "id": "t1-nav-surcharge",
+      "tier": 1,
+      "prompt": "store.py has several similar apply_* functions. I only want to see the one that adds a flat surcharge fee. Read just that function's lines as a tight range (use offset and limit) — do not read the whole file.",
+      "edits": false,
+      "checks": [
+        {"kind": "arg_basename_equals", "tool": "read", "arg": "filePath", "value": "store.py"},
+        {"kind": "arg_present", "tool": "read", "arg": "limit"},
+        {"kind": "arg_int_near", "tool": "read", "arg": "offset", "value": 29, "max_delta": 1},
+        {"kind": "arg_lte", "tool": "read", "arg": "limit", "value": 8}
+      ]
+    },
+    {
+      "id": "t1-nav-roundmoney",
+      "tier": 1,
+      "prompt": "In store.py, one function rounds a monetary amount to 2 decimal places. Read only that function — a tight range of lines, not the whole file.",
+      "edits": false,
+      "checks": [
+        {"kind": "arg_basename_equals", "tool": "read", "arg": "filePath", "value": "store.py"},
+        {"kind": "arg_present", "tool": "read", "arg": "limit"},
+        {"kind": "arg_int_near", "tool": "read", "arg": "offset", "value": 41, "max_delta": 1},
+        {"kind": "arg_lte", "tool": "read", "arg": "limit", "value": 8}
+      ]
+    },
+    {
+      "id": "t1-glob",
+      "tier": 1,
+      "prompt": "List the paths of all the Python source files in this project.",
+      "edits": false,
+      "checks": [
+        {"kind": "called", "tool": "glob"},
+        {"kind": "arg_contains_any", "tool": "glob", "arg": "pattern", "values": ["*.py", ".py"]}
+      ]
+    },
+    {
+      "id": "t2-find-coupon",
+      "tier": 2,
+      "prompt": "Among the functions in store.py, one subtracts a fixed coupon value from an amount. Find which one it is, then read a tight window around just that function.",
+      "edits": false,
+      "checks": [
+        {"kind": "order", "first": "grep", "then": "read"},
+        {"kind": "read_offset_near_grep_line", "max_delta": 1},
+        {"kind": "arg_lte", "tool": "read", "arg": "limit", "value": 8}
+      ]
+    },
+    {
+      "id": "t2-find-shipping",
+      "tier": 2,
+      "prompt": "Locate the shipping_cost function in store.py and read a tight range around it (find its line first; don't read the whole file).",
+      "edits": false,
+      "checks": [
+        {"kind": "order", "first": "grep", "then": "read"},
+        {"kind": "read_offset_near_grep_line", "max_delta": 1},
+        {"kind": "arg_lte", "tool": "read", "arg": "limit", "value": 8}
+      ]
+    },
+    {
+      "id": "t2-find-tax",
+      "tier": 2,
+      "prompt": "One function in store.py adds sales tax to an amount. Find it, then read a tight range around just that function.",
+      "edits": false,
+      "checks": [
+        {"kind": "order", "first": "grep", "then": "read"},
+        {"kind": "arg_basename_equals", "tool": "read", "arg": "filePath", "value": "store.py"},
+        {"kind": "read_offset_near_grep_line", "max_delta": 1},
+        {"kind": "arg_lte", "tool": "read", "arg": "limit", "value": 8}
+      ]
+    },
+    {
+      "id": "t2-find-discount",
+      "tier": 2,
+      "prompt": "store.py has a function that reduces an amount by a percentage discount. Find which lines define it, then read a tight window around just that function.",
+      "edits": false,
+      "checks": [
+        {"kind": "order", "first": "grep", "then": "read"},
+        {"kind": "arg_basename_equals", "tool": "read", "arg": "filePath", "value": "store.py"},
+        {"kind": "read_offset_near_grep_line", "max_delta": 1},
+        {"kind": "arg_lte", "tool": "read", "arg": "limit", "value": 8}
+      ]
+    },
+    {
+      "id": "t2-find-format",
+      "tier": 2,
+      "prompt": "Find the function in store.py that formats an amount as a currency-prefixed price string, then read a tight window around just that function.",
+      "edits": false,
+      "checks": [
+        {"kind": "order", "first": "grep", "then": "read"},
+        {"kind": "read_offset_near_grep_line", "max_delta": 1},
+        {"kind": "arg_lte", "tool": "read", "arg": "limit", "value": 8}
+      ]
+    },
+    {
+      "id": "t3-tightread-then-edit",
+      "tier": 3,
+      "prompt": "In store.py, the shipping_cost function returns a flat 5 for orders below the threshold. First read a tight window around just that function (not the whole file), then change that 5 to 7. Make no other change.",
+      "edits": true,
+      "checks": [
+        {"kind": "arg_lte", "tool": "read", "arg": "limit", "value": 8},
+        {"kind": "file_contains", "file": "store.py", "value": "return 7"},
+        {"kind": "file_absent_substring", "file": "store.py", "value": "return 5"},
+        {"kind": "only_changed", "files": ["store.py"]}
+      ]
+    }
+  ]
+}

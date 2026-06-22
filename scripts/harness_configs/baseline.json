@@ -1,0 +1,8 @@
+{
+  "name": "baseline",
+  "description": "Item-8 default harness: stock opencode config + the repo's custom token-reduced read/grep tools (global ~/.config/opencode/tools) + repair proxy + opencode/model default sampling. No lever overrides. This is the bar every lever must beat.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null
+}

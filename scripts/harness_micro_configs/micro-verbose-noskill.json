@@ -1,0 +1,11 @@
+{
+  "name": "micro-verbose-noskill",
+  "description": "Combination lever: verbose read/grep tool descriptions (lever 3, which lifted tier-1 single-call precision) PLUS the coding-discipline skill disabled (lever 2, which lifted tier-2/3 chains+edits). The two winners from the first sweep help non-overlapping tiers, so this tests whether their gains stack. Regression guard still applies: edit/write must stay present and working with the skill off.",
+  "sampling": {},
+  "env": {},
+  "system_prompt": null,
+  "rules": null,
+  "skill": {"enabled": false},
+  "tools_variant": "verbose",
+  "opencode_config": {}
+}

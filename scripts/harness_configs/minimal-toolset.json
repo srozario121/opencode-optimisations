@@ -1,0 +1,25 @@
+{
+  "name": "minimal-toolset",
+  "description": "L1 (research rank 1): minimal, well-shaped toolset. Disable rarely-used, schema-heavy tools (task, webfetch, websearch, lsp, skill, doom_loop) so the small slow model has a smaller decision surface and more free context; keep read/grep/edit/write/bash/list/glob. Uses the boolean `tools` map (removes the tool) AND a `permission` deny (hard-blocks execution) belt-and-suspenders — see docs/harness-engineering-research.md L1.",
+  "opencode_config": {
+    "tools": {
+      "task": false,
+      "webfetch": false,
+      "websearch": false,
+      "lsp": false,
+      "skill": false,
+      "doom_loop": false
+    },
+    "permission": {
+      "task": "deny",
+      "webfetch": "deny",
+      "websearch": "deny",
+      "lsp": "deny",
+      "skill": "deny",
+      "doom_loop": "deny"
+    }
+  },
+  "env": {},
+  "sampling": {},
+  "system_prompt": null
+}
