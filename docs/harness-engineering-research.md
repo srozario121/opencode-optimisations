@@ -30,6 +30,11 @@ This is the harness analogue of `docs/local-inference-engines-research.md` (the
 item-10 engine survey) and `docs/opencode-config.md` (the already-verified map of
 opencode config knobs). It **builds on** both rather than repeating them.
 
+> **Predictions vs. measurements.** The body of this doc is the *predicted* lever
+> ranking (item 11). The levers were later *run* on two instruments and the results
+> recorded — see **§Empirical results** at the end for what actually moved the
+> needle (one clear win, a full-harness floor, and a sampling-capability correction).
+
 > **Time-sensitivity caveat (dominant).** opencode moves near-daily; everything
 > here is verified against **opencode 1.17.7** (the repo's pin) as of June 2026.
 > The GitHub org renamed `sst/opencode` → `anomalyco/opencode` (same project;
@@ -310,6 +315,116 @@ top_p) documented-but-untested.**
 - **L5 (aggressive truncation), L7 (top_p/top_k)** — documented-but-untested:
   below the single-lever cut; lower expected effect and/or double-edged on a
   pre-screened small subset.
+
+---
+
+## Empirical results — what the baselines actually measured
+
+This survey ranked levers by *predicted* effect. Later work ran them and recorded
+JSONL ledgers; the learnings below either confirm or correct the predictions. Two
+instruments were used:
+
+- a **full** SWE-bench-Lite pass/fail harness over a frozen **8-instance sympy
+  slice** (the deliverable the ranking above was built for), and
+- a lower-bar synthetic **micro-suite** scoring **tool-call fidelity** on a
+  fractional/gradient scale — built precisely because the full harness sat on a
+  **0-floor** (see below), so prompt/tool-description levers could still be *ranked*.
+
+### The one win — tool-description tightening (category 2)
+
+On the micro-suite, replacing verbose tool descriptions/examples with **tight,
+minimal** ones took tool-call fidelity from **0.62 → 1.00** (34/34, reproduced
+across two runs). This is the strongest empirical confirmation of the category-2
+prediction ("tool-description/schema quality is a real lever; small models are
+prompt-robustness-sensitive"). The mechanism is specific and instructive: a verbose
+custom-`read` description that carried a `limit=20` *example* made the small model
+**over-read** (ignore tighter limits); removing that one anchor example fixed it.
+**Lesson:** for a small model every example in a tool description is a behavioural
+anchor — verbose "helpful" descriptions actively mislead, where the same text is
+harmless or helpful to a frontier model. **Adopted.**
+
+### The full-harness floor — 0/8 across every lever tried
+
+On the 8-instance sympy slice, **no lever crossed a single instance to passing.**
+All of these scored **0/8**: baseline, minimal-toolset (L1), low-temp / temp 0 (L2),
+terse-prompt (L3), context-pruning (L4), a test-aware prompt, and anti-repetition
+sampling at two strengths (below). The micro-suite win did **not** transfer to the
+full harness.
+
+This is the honest-ceiling result the survey's own counterweight predicted
+(§The small-model thesis — the ALE-Claw "model ≈ 3× harness effect" finding on
+frontier models). On a **reasoning-bound** slice, harness levers reshuffle *which*
+instances loop / give up / reach the test phase, but model capability is the
+ceiling — a 4-bit local Gemma sits below this slice's floor. Practical consequence:
+the **micro-suite (gradient) is the primary optimisation signal**; the full harness
+is a saturated 0 and only useful as a coarse regression tripwire on this model.
+
+### Sampling — the capability finding that corrects L7
+
+A live differential probe (greedy completion, then re-send with each penalty set
+high; a *changed* deterministic output proves the param reached the sampler)
+established, for **mlx-lm 0.31.x**:
+
+- `repetition_penalty` is **silently ignored**;
+- `frequency_penalty` and `presence_penalty` **are honored**; and
+- opencode **does forward** `options.frequency_penalty` into the request
+  (trajectories diverged sharply from baseline, closing that end-to-end unknown).
+
+So an anti-loop sampling lever on this stack must use **frequency/presence penalty,
+not repetition_penalty** — a concrete correction to the L7 section, which only
+discussed temperature/top-p/top-k. Results, though, did not rescue the score:
+`frequency_penalty: 1.0` broke 3 of 4 degenerate-loop timeouts but over-penalized
+*necessary* code-token repetition and pushed 3 other episodes into timeouts (net
+0/8, a 2-instance regression); `frequency_penalty: 0.3` loop-broke more gently but
+reverted other gains and induced OOM crashes on long wandering episodes.
+**Conclusion: penalties measurably perturb trajectories but no value crossed to a
+pass — not adopted at any tested strength.** Greedy (temp 0) stays the right default
+for tool-call validity (L2 holds); anti-loop sampling is not the rescue on a
+reasoning-bound slice.
+
+### Failure taxonomy (from reading episode transcripts)
+
+Reading full episode transcripts produced a concrete failure taxonomy for a small
+local model on real SWE tasks — useful for anyone hardening a harness, and it points
+the highest-leverage robustness work at **tool-side repair**, not sampling:
+
+1. **Degenerate decoding loops** — the same planning sentence emitted 15–25× before
+   any tool call; the **dominant** budget killer (~50% of failures were full-budget
+   timeouts).
+2. **`doom_loop` auto-reject** firing on the above.
+3. **grep regex-parse errors on literal parens** (e.g. searching `def decompose(` as
+   a regex) — addressed by auto-retrying with ripgrep `-F` (literal string) on an
+   exit-2 parse error.
+4. **`edit` exact-match failures on whitespace/indent** — addressed by a
+   whitespace-insensitive line-oriented re-anchor, **single-candidate only** (>1
+   fuzzy match is a hard fail; never silently mis-apply).
+5. **Catastrophic structural edits with no syntax feedback** — mitigated by an
+   `ast.parse` gate that feeds any syntax error back into the tool result (the write
+   is kept so the model iterates).
+6. **Over-reading** — the same behaviour the micro-suite `limit` finding isolated.
+
+These map to the survey's category 6 (repair/retry) and category 2 (tool shape):
+the durable wins are **tool-side repair** (grep `-F` retry, fuzzy-edit re-anchor,
+post-write syntax gate), which raise the reliability floor regardless of model.
+
+### Methodology corrections worth recording
+
+- **opencode loads custom tools from the *global* config dir, not only the project
+  dir.** It was initially assumed that a SWE-bench checkout (a fresh clone with no
+  `.opencode/tools/`) ran opencode's stock built-ins; in fact the global opencode
+  config dir (symlinked to the repo's custom `read`/`grep`) was active the whole
+  time. The micro-suite proved this by isolating via `XDG_CONFIG_HOME` and still
+  measuring a tool-description-dependent gradient. **Implication:** to make a harness
+  experiment reproducible, **materialize the tool set into the checkout per-instance**
+  rather than relying on untracked global symlinks — a clean machine would silently
+  fall back to built-ins and score a different harness than intended.
+
+> **Net.** Of the predicted shortlist, the empirically validated win is the
+> **tool-description tightening** (category 2) on the fidelity micro-suite; the
+> full-harness pass-rate levers (L1–L4) and anti-loop **sampling** (L7) did **not**
+> move a reasoning-bound 4-bit-Gemma slice off 0/8. The transferable optimisation
+> lesson is **tool-side robustness + minimal tool descriptions**, measured on a
+> gradient instrument — not pass/fail on a slice that sits below the model's floor.
 
 ---
 
