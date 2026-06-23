@@ -1,7 +1,7 @@
 {
   "_comment": "Frozen SWE-bench Lite subset for TODO item 11 harness eval. Each instance pre-screened under 30000 est. tokens and verified by running its gold patch (FAIL_TO_PASS flips). Regenerate with scripts/harness_eval.py prepare.",
   "context_screen_tokens": 30000,
-  "frozen_at": "2026-06-20T10:40:26",
+  "frozen_at": "2026-06-23T08:57:20",
   "instances": [
     {
       "instance_id": "sympy__sympy-13043",
@@ -16,7 +16,16 @@
         "test_best_origin"
       ],
       "prepared": true,
-      "notes": "installed .[test]; gold flips 1/1 F2P, 1/1 P2P pass"
+      "notes": "installed .[test]; gold flips 1/1 F2P, 1/1 P2P pass",
+      "tier": 4,
+      "n_files": 1,
+      "needs_search": true,
+      "needs_bash": false,
+      "expected_tool_seq": [
+        "grep",
+        "read",
+        "edit"
+      ]
     },
     {
       "instance_id": "sympy__sympy-21614",
@@ -36,7 +45,15 @@
         "test_Matrix_kind"
       ],
       "prepared": true,
-      "notes": "installed .[test]; gold flips 1/1 F2P, 6/6 P2P pass"
+      "notes": "installed .[test]; gold flips 1/1 F2P, 6/6 P2P pass",
+      "tier": 3,
+      "n_files": 1,
+      "needs_search": false,
+      "needs_bash": false,
+      "expected_tool_seq": [
+        "read",
+        "edit"
+      ]
     },
     {
       "instance_id": "sympy__sympy-12481",
@@ -57,7 +74,15 @@
         "test_printing_cyclic"
       ],
       "prepared": true,
-      "notes": "installed .[test]; gold flips 1/1 F2P, 7/7 P2P pass"
+      "notes": "installed .[test]; gold flips 1/1 F2P, 7/7 P2P pass",
+      "tier": 3,
+      "n_files": 1,
+      "needs_search": false,
+      "needs_bash": false,
+      "expected_tool_seq": [
+        "read",
+        "edit"
+      ]
     },
     {
       "instance_id": "sympy__sympy-15345",
@@ -79,7 +104,16 @@
         "test_Derivative"
       ],
       "prepared": true,
-      "notes": "installed .[test]; gold flips 1/1 F2P, 8/8 P2P pass"
+      "notes": "installed .[test]; gold flips 1/1 F2P, 8/8 P2P pass",
+      "tier": 4,
+      "n_files": 1,
+      "needs_search": true,
+      "needs_bash": false,
+      "expected_tool_seq": [
+        "grep",
+        "read",
+        "edit"
+      ]
     },
     {
       "instance_id": "sympy__sympy-21627",
@@ -119,7 +153,15 @@
         "test_zero_assumptions"
       ],
       "prepared": true,
-      "notes": "installed .[test]; gold flips 1/1 F2P, 26/26 P2P pass"
+      "notes": "installed .[test]; gold flips 1/1 F2P, 26/26 P2P pass",
+      "tier": 3,
+      "n_files": 1,
+      "needs_search": false,
+      "needs_bash": false,
+      "expected_tool_seq": [
+        "read",
+        "edit"
+      ]
     },
     {
       "instance_id": "sympy__sympy-11400",
@@ -163,7 +205,15 @@
         "test_ccode_Assignment"
       ],
       "prepared": true,
-      "notes": "installed .[test]; gold flips 2/2 F2P, 29/29 P2P pass"
+      "notes": "installed .[test]; gold flips 2/2 F2P, 29/29 P2P pass",
+      "tier": 4,
+      "n_files": 1,
+      "needs_search": false,
+      "needs_bash": false,
+      "expected_tool_seq": [
+        "read",
+        "edit"
+      ]
     },
     {
       "instance_id": "sympy__sympy-18532",
@@ -206,7 +256,15 @@
         "test_canonical_variables"
       ],
       "prepared": true,
-      "notes": "installed .[test]; gold flips 2/2 F2P, 28/28 P2P pass"
+      "notes": "installed .[test]; gold flips 2/2 F2P, 28/28 P2P pass",
+      "tier": 4,
+      "n_files": 1,
+      "needs_search": false,
+      "needs_bash": false,
+      "expected_tool_seq": [
+        "read",
+        "edit"
+      ]
     },
     {
       "instance_id": "sympy__sympy-19007",
@@ -248,7 +306,16 @@
         "test_matrix_expression_to_indices"
       ],
       "prepared": true,
-      "notes": "installed .[test]; gold flips 3/3 F2P, 26/26 P2P pass"
+      "notes": "installed .[test]; gold flips 3/3 F2P, 26/26 P2P pass",
+      "tier": 4,
+      "n_files": 1,
+      "needs_search": true,
+      "needs_bash": false,
+      "expected_tool_seq": [
+        "grep",
+        "read",
+        "edit"
+      ]
     }
   ]
 }

@@ -465,10 +465,16 @@ _start_proxy() {
   # OTEL_PROTOCOL.
   local proxy_otel=0
   [ "$MLX_OTEL" != "0" ] && proxy_otel=1
+  # MLX_PROXY_CAPTURE (optional, off by default): dir to dump each chat
+  # request+response for tool-call-reliability debugging (item 16 L6). Set it in
+  # the environment before `make mlx-up` to enable on the next run.
   MLX_PROXY_LISTEN_HOST=127.0.0.1 MLX_PROXY_LISTEN_PORT="$listen_port" \
     MLX_PROXY_UPSTREAM="http://127.0.0.1:$upstream_port" \
     MLX_PROXY_REPAIR="$repair" \
     MLX_PROXY_ROLE="$role" \
+    MLX_PROXY_CAPTURE="${MLX_PROXY_CAPTURE:-}" \
+    MLX_PROXY_NO_THINK="${MLX_PROXY_NO_THINK:-0}" \
+    MLX_PROXY_SEED="${MLX_PROXY_SEED:-}" \
     MLX_PROXY_OTEL="$proxy_otel" \
     MLX_PROXY_OTEL_ENDPOINT="http://127.0.0.1:$OTEL_HTTP_PORT" \
     MLX_PROXY_OTEL_SERVICE="$otel_service" \
