@@ -23,6 +23,13 @@ dev = [
     "ruff>=0.6,<1",
     "mypy>=1.11,<2",
 ]
+# Optional: the real Pydantic Monty sandbox VM, used ONLY by the codemode `--engine
+# monty` path (the default `exec` engine is stdlib-only). Install with
+# `uv sync --group monty`. Pinned <0.1 — Monty is alpha and its supported Python
+# subset shifts between minor releases (see docs/sandbox-codeexec-research.md).
+monty = [
+    "pydantic-monty>=0.0.18,<0.1.0",
+]
 
 [tool.ruff]
 line-length = 100

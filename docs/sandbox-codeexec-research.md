@@ -3,6 +3,8 @@
 **Item:** TODO 21.1 · **Run:** `wf_42940d55-80e` (deep-research, 18 sources, 85 claims
 extracted → 25 verified → 19 confirmed / 6 refuted → 9 synthesized) · **Date:** 2026-06-23
 
+> 🛠 **To turn this on**, see the setup guide: [`docs/codemode-setup.md`](./codemode-setup.md).
+
 > **[lit-only]** per the repo Evidence policy. Every quantitative claim below is
 > citation-checked against the source, **not** measured on this stack. The decisive
 > number — whether Gemma-4-E4B can emit correct orchestration code — is **unmeasured**.
