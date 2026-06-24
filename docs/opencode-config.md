@@ -53,6 +53,28 @@ declare `limit.context` and `limit.output` per model, or opencode errors
 - ⚠️ Some versions don't forward `baseURL` for custom providers ([#5674]) —
   confirm requests actually hit `127.0.0.1` (watch the MLX/proxy log).
 
+**Built-in providers need no `npm`/`baseURL` block — only an options override.**
+A first-class provider opencode already knows (e.g. `opencode`, reaching the zen
+gateway) is referenced as `provider/model` directly; you only declare a `provider`
+entry to *override* its model options. The harness's `external_provider` gate (TODO
+item 22) uses exactly this: with the flag on, `harness_eval.apply_levers` writes **no
+`mlx-local` block and no local `baseURL`**, just the sampling/limit override under the
+built-in provider —
+
+```jsonc
+{
+  "provider": { "opencode": { "models": { "big-pickle": {
+    "limit": { "context": 32768, "output": 4096 },
+    "options": { "temperature": 0.0 }
+  } } } },
+  "model": "opencode/big-pickle",
+  "small_model": "opencode/big-pickle"
+}
+```
+
+— so opencode resolves the ref through its own provider with the local MLX stack
+off. See *Online harness-soundness control* in `docs/opencode-local.md`.
+
 *Sources: [providers docs], [#22253], [#1735], [#5674]*
 
 ---

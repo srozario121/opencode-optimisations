@@ -1,0 +1,13 @@
+{
+  "name": "online-bigpickle",
+  "description": "Item 22 online harness-soundness CONTROL ARM (diagnostic, NOT a serve-path change). Runs the EXACT same SWE subset + tools + scaffolding + scoring as the Gemma arm against a strong online model (opencode/big-pickle, the free hosted model via the opencode zen gateway) to isolate harness mechanical bugs from local-model capability. external_provider=true gates off ALL THREE local-only assumptions: no mlx-local provider/baseURL block is written (opencode's built-in `opencode` provider resolves the ref), the MLX health-check/detect_model/OOM-restart paths are skipped, and an auth+network pre-flight runs instead. Requires `opencode auth login` once + network at run time. DELTAS vs the Gemma arm (held: tools/prompt/subset/scoring byte-identical; varied & recorded here): sampling temperature=0.0 (greedy, matches the low-temp determinism lever) and a shorter per-instance timeout=240s (the default 600s is tuned for ~8-12 tok/s Gemma and would over-generously cap a fast gateway model). Banded verdict on the K>=3 subset: <=1/8 => harness broken; >=5/8 => harness sound; 2-4/8 => inconclusive (item 22.5). Primary evidence is the failure histogram, not the aggregate.",
+  "external_provider": true,
+  "model_ref": "opencode/big-pickle",
+  "timeout": 240,
+  "opencode_config": {},
+  "env": {},
+  "sampling": {
+    "temperature": 0.0
+  },
+  "system_prompt": null
+}

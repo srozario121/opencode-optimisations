@@ -4,7 +4,7 @@
 .PHONY: sync lint typecheck test check \
         mlx-pull mlx-up mlx-down mlx-status mlx-serve mlx-opencode-config \
         mlx-jaeger-up mlx-jaeger-down mlx-bench mlx-bench-summary \
-        harness-eval harness-eval-prepare harness-eval-summary \
+        harness-eval harness-eval-prepare harness-eval-summary harness-eval-online \
         harness-micro harness-micro-selftest harness-micro-summary
 
 # --- quality gate (mirrors the originating repo's tooling) ---
@@ -68,12 +68,21 @@ mlx-bench-summary:
 #   make harness-eval-prepare              # one-time, ONLINE: build+verify venvs (py3.9)
 #   make harness-eval CONFIG=baseline      # score one lever config over the subset
 #   make harness-eval-summary              # print the comparison table
-# Extra args via HARNESS_ARGS. Needs the stack up (make mlx-up).
+# Extra args via HARNESS_ARGS. Needs the local stack up (make mlx-up) EXCEPT for
+# harness-eval-online (item 22), which is the one online exception — it runs the
+# control arm through opencode's own provider with MLX OFF (no mlx-up).
 harness-eval-prepare:
 	uv run python scripts/harness_eval.py prepare --python 3.9 $(HARNESS_ARGS)
 
 harness-eval:
 	uv run python scripts/harness_eval.py run --config "$(CONFIG)" $(HARNESS_ARGS)
+
+# Item 22 online harness-soundness control. NO mlx-up dependency. Requires
+# network + a one-time `opencode auth login` to the `opencode` provider. The
+# online-bigpickle config carries external_provider + model_ref + timeout, so the
+# default CONFIG runs the control in one command; override CONFIG for variants.
+harness-eval-online:
+	uv run python scripts/harness_eval.py run --config "$(or $(CONFIG),online-bigpickle)" $(HARNESS_ARGS)
 
 harness-eval-summary:
 	uv run python scripts/harness_eval.py summary

@@ -302,6 +302,41 @@ def detect_model(base_url: str, timeout: float = 10.0) -> str:
     return data[0].get("id", "unknown")
 
 
+def online_preflight(model_ref: str, timeout: float = 120.0) -> bool:
+    """item 22: the online control arm's replacement for the MLX health-check.
+
+    Confirms (a) `opencode` is on PATH and (b) the gateway + auth actually resolve
+    the model ref over the network, via one trivial `opencode run` ping. On any
+    failure it prints a concrete remediation and returns False so cmd_run aborts
+    BEFORE the subset loop — otherwise all 8 instances fail opaquely one by one.
+    """
+    if shutil.which("opencode") is None:
+        print("error: `opencode` not on PATH — install opencode before the "
+              "online control run (see docs/opencode-local.md)", file=sys.stderr)
+        return False
+    cmd = ["opencode", "run", "--format", "json", "-m", model_ref,
+           "Reply with the single word: ok"]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"error: online pre-flight timed out after {timeout:.0f}s pinging "
+              f"{model_ref} — check network / gateway availability",
+              file=sys.stderr)
+        return False
+    except OSError as e:
+        print(f"error: could not launch opencode for the pre-flight: {e}",
+              file=sys.stderr)
+        return False
+    if proc.returncode != 0:
+        print(f"error: online pre-flight failed for {model_ref} "
+              f"(exit {proc.returncode}): {proc.stderr.strip()[:400]}\n"
+              f"       run `opencode auth login` and check network connectivity",
+              file=sys.stderr)
+        return False
+    print(f"  [pre-flight] {model_ref} reachable — proceeding with the subset")
+    return True
+
+
 def restart_server(base_url: str, wait_s: float = 180.0) -> bool:
     """Bounce the MLX stack via scripts/mlx.sh and wait for health. Returns ok."""
     print("  [recover] restarting MLX server via scripts/mlx.sh …", flush=True)
@@ -369,24 +404,39 @@ def apply_levers(checkout: str, cfg: dict, model_ref: str, base_url: str) -> dic
     [needs-live-verification] link — confirm via the repair-proxy request log on
     the first L0/L1 run.
     """
-    served = model_ref.split("/", 1)[1] if "/" in model_ref else model_ref
+    provider_id, served = (model_ref.split("/", 1) if "/" in model_ref
+                           else (DEFAULT_PROVIDER, model_ref))
     model_opts: dict = {"limit": {"context": 32768, "output": 4096}}
     sampling = cfg.get("sampling") or {}
     if sampling:
         model_opts["options"] = dict(sampling)
-    base_conf = {
-        "$schema": "https://opencode.ai/config.json",
-        "provider": {
-            DEFAULT_PROVIDER: {
-                "npm": "@ai-sdk/openai-compatible",
-                "name": "Local MLX (Gemma 4 QAT)",
-                "options": {"baseURL": base_url, "apiKey": "not-needed"},
-                "models": {served: model_opts},
-            }
-        },
-        "model": model_ref,
-        "small_model": model_ref,
-    }
+    if cfg.get("external_provider"):
+        # item 22 (online control arm): the model ref resolves through opencode's
+        # OWN built-in provider (e.g. `opencode`/big-pickle via the zen gateway),
+        # so we write NO `mlx-local` block and NO local `baseURL` — the local MLX
+        # stack stays off. We still attach the served model's `options`/`limit`
+        # under that built-in provider so provider-appropriate sampling/context
+        # limits flow without registering a custom (npm/baseURL) provider.
+        base_conf = {
+            "$schema": "https://opencode.ai/config.json",
+            "provider": {provider_id: {"models": {served: model_opts}}},
+            "model": model_ref,
+            "small_model": model_ref,
+        }
+    else:
+        base_conf = {
+            "$schema": "https://opencode.ai/config.json",
+            "provider": {
+                DEFAULT_PROVIDER: {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "name": "Local MLX (Gemma 4 QAT)",
+                    "options": {"baseURL": base_url, "apiKey": "not-needed"},
+                    "models": {served: model_opts},
+                }
+            },
+            "model": model_ref,
+            "small_model": model_ref,
+        }
     conf = _deep_merge(base_conf, cfg.get("opencode_config") or {})
     # L3 (terser prompt): a custom agent `prompt` REPLACES opencode's default
     # system prompt (it is not appended — see docs/harness-engineering-research.md
@@ -925,6 +975,10 @@ def score_instance(spec: InstanceSpec, model_ref: str, cfg: dict, base_url: str,
     run_dir = os.path.join(RUNS_DIR, label, spec.instance_id)
     checkout = clean_checkout(spec)
     env = apply_levers(checkout, cfg, model_ref, base_url)
+    # item 22: the online arm runs with the local MLX endpoint OFF, so the
+    # OOM-vs-timeout disambiguation (which probes `base_url`) is meaningless and
+    # would mislabel every timeout as `oom`. Skip the local health probes.
+    external = bool(cfg.get("external_provider"))
 
     status, ep_wall, ep_metrics = run_opencode_episode(
         checkout, spec, model_ref, env, run_dir, timeout)
@@ -942,10 +996,10 @@ def score_instance(spec: InstanceSpec, model_ref: str, cfg: dict, base_url: str,
 
     if status == "timeout":
         # Distinguish a real timeout from a server crash that stalled the call.
-        if not server_healthy(base_url):
+        if not external and not server_healthy(base_url):
             return _result(False, "oom")
         return _result(False, "timeout")
-    if not server_healthy(base_url):
+    if not external and not server_healthy(base_url):
         return _result(False, "oom")
 
     patch = capture_model_patch(checkout, spec, run_dir)
@@ -1592,23 +1646,49 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     cfg = load_config(args.config)
-    if not server_healthy(args.base_url):
-        # Self-heal: a prior run may have left the server OOM-dead. Try once to
-        # bring it back before giving up (so a multi-config sweep doesn't abort
-        # just because the last instance of the previous config crashed it).
-        print(f"MLX endpoint {args.base_url} is down — attempting restart …")
-        if not restart_server(args.base_url):
-            print(f"error: MLX endpoint {args.base_url} is down and restart "
-                  f"failed — `make mlx-up` first", file=sys.stderr)
+    # item 22: the online control arm resolves the model through opencode's own
+    # provider (e.g. opencode/big-pickle) with the local MLX stack OFF. The flag
+    # comes from the config OR `--external-provider`; CLI wins by writing it back
+    # into cfg so apply_levers / score_instance see one source of truth.
+    external = bool(cfg.get("external_provider")) or bool(
+        getattr(args, "external_provider", False))
+    if external:
+        cfg["external_provider"] = True
+        model_ref = args.model or cfg.get("model_ref")
+        if not model_ref:
+            print("error: external_provider is set but no model ref — give "
+                  "`model_ref` in the config or pass `--model provider/model`",
+                  file=sys.stderr)
             return 2
-    served = detect_model(args.base_url)
-    model_ref = args.model or f"{DEFAULT_PROVIDER}/{served}"
+        print(f"[online arm] external_provider ON — skipping MLX health-check / "
+              f"detect_model / OOM-restart; requires network + opencode auth "
+              f"(run `opencode auth login` once). model={model_ref}")
+        if not online_preflight(model_ref):
+            return 2
+    else:
+        if not server_healthy(args.base_url):
+            # Self-heal: a prior run may have left the server OOM-dead. Try once to
+            # bring it back before giving up (so a multi-config sweep doesn't abort
+            # just because the last instance of the previous config crashed it).
+            print(f"MLX endpoint {args.base_url} is down — attempting restart …")
+            if not restart_server(args.base_url):
+                print(f"error: MLX endpoint {args.base_url} is down and restart "
+                      f"failed — `make mlx-up` first", file=sys.stderr)
+                return 2
+        served = detect_model(args.base_url)
+        model_ref = args.model or f"{DEFAULT_PROVIDER}/{served}"
     base_label = args.label or f"{cfg['name']}-{time.strftime('%Y%m%d-%H%M')}"
     repeats = max(1, int(getattr(args, "repeats", 1) or 1))
     group = base_label if repeats > 1 else ""
+    # Per-instance timeout: an explicit --timeout always wins; otherwise a config
+    # `timeout` applies (item 22 lets the online arm cap its gateway model
+    # differently from the 600s tuned for ~8-12 tok/s Gemma); else the default.
+    timeout = (args.timeout if args.timeout is not None
+               else float(cfg.get("timeout") or DEFAULT_INSTANCE_TIMEOUT))
 
     print(f"Scoring config '{cfg['name']}' (hash {config_hash(cfg)})  "
-          f"model={model_ref}  subset={len(subset)} instances"
+          f"model={model_ref}  subset={len(subset)} instances  "
+          f"timeout={timeout:.0f}s"
           f"{f'  repeats={repeats}' if repeats > 1 else ''}\n")
     pass_counts: list[int] = []
     for rep in range(1, repeats + 1):
@@ -1616,7 +1696,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         if repeats > 1:
             print(f"\n=== repeat {rep}/{repeats}  (label {label}) ===", flush=True)
         results = _score_subset(subset, model_ref, cfg, args.base_url, label,
-                                args.timeout)
+                                timeout)
         passed = sum(1 for r in results if r.passed)
         pass_counts.append(passed)
         append_ledger(RunRow(
@@ -1647,6 +1727,7 @@ def _score_subset(subset: list[InstanceSpec], model_ref: str, cfg: dict,
     """One full pass over the subset (used once per K-run repeat). Restarts the
     server after any OOM so the next instance/repeat starts healthy."""
     results: list[InstanceResult] = []
+    external = bool(cfg.get("external_provider"))  # item 22: no local MLX to restart
     for i, spec in enumerate(subset, 1):
         _hydrate(spec)
         print(f"[{i}/{len(subset)}] {spec.instance_id} …", flush=True)
@@ -1660,7 +1741,7 @@ def _score_subset(subset: list[InstanceSpec], model_ref: str, cfg: dict,
         mark = "PASS" if r.passed else "FAIL"
         print(f"  -> {mark} ({r.reason})  episode={r.episode_wall_s}s  "
               f"F2P={r.fail_to_pass_passed}/{r.fail_to_pass_total}", flush=True)
-        if r.reason == "oom":
+        if r.reason == "oom" and not external:
             restart_server(base_url)
     return results
 
@@ -1929,6 +2010,30 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     check("tier report renders the 4-tier header + a config row",
           "4-tier ladder" in rtxt and "| baseline | swebench |" in rtxt)
 
+    # 16. item 22 — external_provider gate. With the flag on, the written
+    #     opencode.json must omit the local `mlx-local`/DEFAULT_PROVIDER block and
+    #     any local baseURL (MLX stays off; opencode's own provider resolves the
+    #     ref), pin model/small_model to the external ref, and still forward the
+    #     sampling block to that provider's model options.
+    with tempfile.TemporaryDirectory() as td:
+        apply_levers(td, {"name": "ext", "external_provider": True,
+                          "sampling": {"temperature": 0.0}},
+                     "opencode/big-pickle", DEFAULT_BASE_URL)
+        with open(os.path.join(td, "opencode.json")) as f:
+            ext_conf = json.load(f)
+    ext_prov = ext_conf.get("provider", {})
+    ext_blob = json.dumps(ext_conf)
+    check("external_provider: no mlx-local/DEFAULT_PROVIDER block written",
+          DEFAULT_PROVIDER not in ext_prov)
+    check("external_provider: no local baseURL in written config",
+          "baseURL" not in ext_blob and "127.0.0.1" not in ext_blob)
+    check("external_provider: model/small_model pinned to the external ref",
+          ext_conf.get("model") == "opencode/big-pickle"
+          and ext_conf.get("small_model") == "opencode/big-pickle")
+    check("external_provider: sampling forwarded to the external model options",
+          ext_prov.get("opencode", {}).get("models", {}).get("big-pickle", {})
+          .get("options", {}).get("temperature") == 0.0)
+
     print(f"\nselftest: {'OK' if ok else 'FAILURES'}")
     return 0 if ok else 1
 
@@ -1959,9 +2064,17 @@ def main(argv: list[str] | None = None) -> int:
                     help="run label (default: config+timestamp); repeats append -rN")
     rn.add_argument("--base-url", default=DEFAULT_BASE_URL)
     rn.add_argument("--model", default=None,
-                    help="opencode model ref (default: mlx-local/<detected>)")
-    rn.add_argument("--timeout", type=float, default=DEFAULT_INSTANCE_TIMEOUT,
-                    help="hard per-instance wall-clock cap (s)")
+                    help="opencode model ref (default: mlx-local/<detected>; "
+                         "for --external-provider give provider/model directly)")
+    rn.add_argument("--external-provider", action="store_true",
+                    help="item 22 online control arm: resolve the model through "
+                         "opencode's own provider (e.g. opencode/big-pickle) with "
+                         "the local MLX stack OFF — skips health-check/detect_model/"
+                         "OOM-restart, runs an auth+network pre-flight instead. "
+                         "Also settable via `external_provider: true` in the config")
+    rn.add_argument("--timeout", type=float, default=None,
+                    help="hard per-instance wall-clock cap (s); overrides a config "
+                         f"`timeout`; default {DEFAULT_INSTANCE_TIMEOUT:.0f}s")
     rn.set_defaults(func=cmd_run)
 
     tr = sub.add_parser("tier", help="(offline) assign item-17 difficulty tiers + "

@@ -7,8 +7,9 @@ claude-mem memory and the `docs/` research.
 > **History note.** This repo was *extracted* (item 15) from a larger personal
 > toolkit (`admin`), where the original 2,475-line TODO.md (items 1–16) lived.
 > That ledger did not come across — items 1–16 were reconstructed from claude-mem
-> cross-session memory so the numbering stays continuous. Items 1–15 are recorded
-> here; the open work (item 16+) remains in `TODO.md`.
+> cross-session memory so the numbering stays continuous. Items 1–15, **17, 21, and
+> 22** are recorded here; the open work (items 16, 18, 19, 20, and the optional 21.4c
+> follow-up) remains in `TODO.md`.
 
 ## Done (items 1–15)
 
@@ -32,3 +33,87 @@ claude-mem memory and the `docs/` research.
 - **14** — "Signal-producing harness tests": improved the **micro-suite 0.62 → 1.00**.
   ⚠ **Did NOT transfer to the full harness** — see item 16 (in `TODO.md`).
 - **15** — Extracted the opencode stack into this standalone published repo. **= this repo.**
+
+## Done (items 17, 21, 22)
+
+- **22** — **Online-model harness-soundness control (diagnostic for item 16).**
+  Ran the **exact same full harness** (frozen 8-instance tier≥3 sympy subset, same
+  tools/prompt/scoring) against a strong online model — `opencode/big-pickle`, the
+  free hosted model on the opencode zen gateway — to isolate **harness mechanical
+  bugs from local-model capability**. Diagnostic/CI control only; the frozen local
+  serve stack is unchanged.
+  - **22.1/22.2** — Added an `external_provider` gate that short-circuits ALL THREE
+    local-only assumptions so the run works with **MLX fully off**: `apply_levers`
+    writes no `mlx-local`/`baseURL` block (sampling/limit ride opencode's built-in
+    provider), `cmd_run` skips `server_healthy`/restart/`detect_model`, and
+    `score_instance`/`_score_subset` skip the local OOM probe/restart (which would
+    have mislabelled every online timeout as `oom`). An `online_preflight` auth+network
+    check replaces the MLX health-check; selftest asserts no local leak + pinned ref.
+    `harness_configs/online-bigpickle.json` lever config + `make harness-eval-online`
+    (no `mlx-up` dep) make it one command. `make check` green.
+  - **22.3/22.5** — **VERDICT: HARNESS SOUND.** BigPickle scored **4/8** (`ok`) on the
+    identical subset. The aggregate sits in the numeric "inconclusive" band, but the
+    pre-registered 22.5 disambiguation resolves it on the **histogram** (the primary
+    evidence): re-running the 4 failures at the Gemma-identical 600s cap collapses the
+    failure modes to **100% capability modes** with **ZERO mechanical/harness modes**:
+
+    | arm (same subset `b8733c486557`) | pass | failure histogram |
+    |---|---|---|
+    | Gemma-4-E4B baseline (K=3 mean) | **0/8** | `tests-failed`, `timeout`, `no-edit` — **never one `ok`** |
+    | BigPickle @240s (22.3) | **4/8** | `ok`×4, `timeout`×2, `catastrophic-edit`×1, `no-edit`×1 |
+    | BigPickle @600s (22.5, Gemma-identical) | **4/8** | `ok`×4, `tests-failed`×3, `catastrophic-edit`×1 — **0 oom / 0 degenerate-loop / 0 no-edit / 0 edit-mismatch** |
+
+    Trace reading confirmed the pipeline end-to-end: a PASS (sympy-15345) captured a
+    real `_print_Max/_print_Min` fix → 10 tests passed; the 22.3 `no-edit` (sympy-19007)
+    was a genuine `length` output-budget cutoff (grep/read only, zero edit attempts),
+    not a harness miss — at 600s it completes with a real edit and **F2P 1/3 partial**,
+    proving the scorer reads actual pytest results, not a binary mis-score. The 22.3
+    `timeout`/`no-edit` categories were artifacts of a deliberately-tightened 240s cap;
+    at the Gemma-identical 600s they vanish. **Decisive contrast:** Gemma never writes a
+    single correct fix (0 `ok` across 3 repeats) while BigPickle writes 4 on the
+    **identical** scaffolding — so the harness demonstrably *can* score passes and the
+    local 0/8 is genuinely **capability-bound**, not harness-broken. Item-16's
+    capability-bound framing holds; GEPA/prompt work is unblocked. One-shot control —
+    re-run only after structural harness changes. Docs: `docs/opencode-local.md`.
+
+- **17** — **Tiered validation harness.** Replaced the binary "micro-passes /
+  full-harness all-fails" signal with a 4-tier gradient + failure-mode breakdown.
+  Unified both harnesses into one ladder (**T1** micro single tool-call · **T2**
+  micro multi-step + micro-edit · **T3** single-file real fix · **T4**
+  multi-file/multi-site real fix; `GLOBAL_TIERS`/`MICRO_TIER_MAP`). Per-test static
+  metadata (`tier`, `n_files`, `needs_search`, `needs_bash`, `expected_tool_seq`)
+  plus a **per-episode-derived `failure_category`** mapping `reason` + E0 metrics to
+  the item-16 7-mode taxonomy (shared vocabulary with items 16/18). Offline `tier`
+  subcommand buckets instances from cached gold patch + F2P set (frozen sympy-8:
+  T3=3, T4=5). `tier_breakdown()`/`build_tier_report()` give per-config per-tier
+  pass/total + failure histogram; `_render_tier_report` folds into `summary.md` and
+  `write_tier_report` emits `tier-report.jsonl` (pure aggregation, no re-run) — a
+  cheap fitness signal for item 19. `make check` green; both selftests OK.
+  Docs: `docs/tiered-harness.md`.
+- **21** — **Sandboxed code-execution ("code mode") for parallel/chained tool
+  calls.** Investigated driving tool calls through a code-execution sandbox so the
+  agent batches/chains/parallelises N calls in one rollout instead of one
+  tool-call-per-decode-pass (the dominant wall-clock cost at 8–12 tok/s).
+  - **21.1** deep-research survey (18 sources): mechanism sound, **Monty = Pydantic
+    Monty** deployable offline (~5 MB, in-process, MIT) but alpha; lit claimed a
+    weak-model "structure tax". `docs/sandbox-codeexec-research.md`.
+  - **21.2a/b** decisive **local code-gen gate — PASSED**: Gemma-4-E4B
+    orchestration-code pass@1 **1.0** across base (18/18) + hard (25/25) tiers, under
+    both restricted `exec` and the real `pydantic_monty` v0.0.18 engine — **locally
+    refutes the "structure tax"** (markdown code blocks, not JSON-wrapped). Monty's
+    alpha dialect taxed the *frontier* control, not Gemma (which writes plainer
+    loops). `scripts/codegen_probe.py`.
+  - **21.3** round-trip A/B prototype (mock harness): code-mode vs flat ReAct =
+    **−83% wall-clock · −91% tokens · +0.667 pass@1** (ReAct non-terminated on 4/6 —
+    item-16 pathology). `scripts/codemode_ab.py`.
+  - **21.4a** shipped the real executor `scripts/codemode_exec.py` (sandbox bound to
+    real host-tools, path-jailed, JSON envelope) + `.opencode/tools/codemode.ts`;
+    **local Gemma invoked `codemode` natively** end-to-end through the live agent loop
+    + repair proxy (one decode, 9 host-ops).
+  - **21.4b** production A/B on real opencode: the 21.3 5× is **TEMPERED** — real
+    opencode has `bash` (itself a "code mode"), so the model self-batches and
+    codemode's edge shrinks to ~24%; it still clearly wins non-self-batched cases
+    (def_count grep×4 → 2 calls, −56% wall) and never lost, but does **not** fix the
+    degenerate-loop. **codemode kept enabled**; cite 21.3 as a bash-less upper bound.
+  - **21.4c** (firm up k≥5 + find code-mode's niche vs `bash`; final adopt/reject)
+    remains **open in `TODO.md`**, gated behind item 16.

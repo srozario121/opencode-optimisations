@@ -1286,6 +1286,116 @@ discriminated — two levers moved it, via *different* mechanisms:
 skills-off, since the two help non-overlapping tiers and may stack toward ~0.7).
 That confirmation + the generator wiring is the remaining open step.
 
+## Online harness-soundness control (TODO item 22)
+
+Item 16's local baseline is **0/8** with the frozen Gemma-4-E4B. That number is only
+interpretable as *capability-bound* once we've proven the **harness itself** isn't
+silently broken. Item 22 adds the missing control arm: run the **exact same**
+full harness (same SWE subset, tools, scaffolding, scoring) against a **strong
+online model** — `opencode/big-pickle`, the free hosted model on the opencode zen
+gateway — and read its failure histogram.
+
+This is a **diagnostic / CI control only — NOT a serve-path change.** The frozen
+local stack (Gemma-4-E4B / mlx-lm 0.31.3, fully-local-at-serve) is unchanged; the
+online model exists solely to validate the scaffolding and is never shipped or used
+at serve time. It is the one explicit **online** exception — run on demand, never in
+the offline serve path.
+
+### The `external_provider` gate
+
+`scripts/harness_eval.py` wires the local stack in at three coupled points, all of
+which the `external_provider` flag short-circuits so the run works with **MLX fully
+off**:
+
+1. **`apply_levers`** — normally writes the `mlx-local` custom provider block
+   (`npm` + `options.baseURL` → the local `/v1` endpoint). With the gate on it writes
+   **no `mlx-local` block and no local `baseURL`**; instead it pins `model`/`small_model`
+   to the external ref and attaches the served model's `options`/`limit` under
+   opencode's **own built-in provider** (e.g. `provider.opencode.models.big-pickle`),
+   so opencode resolves the ref through the gateway while provider-appropriate
+   sampling/context limits still flow.
+2. **`cmd_run`** — skips `server_healthy`/`restart_server` (there is no local endpoint
+   to health-check or bounce).
+3. **`detect_model` + the OOM path** — skips `detect_model(/v1/models)` (takes the ref
+   straight from config/`--model`) and the per-instance OOM-vs-timeout probe + the
+   `_score_subset` OOM-restart (which would otherwise mislabel every online timeout
+   as `oom`).
+
+In place of the removed MLX health-check, an **auth/connectivity pre-flight**
+(`online_preflight`) runs once before the subset loop: it confirms `opencode` is on
+`PATH` and pings the model ref with a trivial `opencode run`, aborting early with a
+`run 'opencode auth login' + check network` remediation instead of letting all 8
+instances fail opaquely. `selftest` asserts the gate: with `external_provider` on the
+written `opencode.json` has no `mlx-local`/`baseURL` and pins the external ref.
+
+### Running it (one command, online)
+
+```bash
+# One-time (if the free gateway ever requires it): opencode auth login → `opencode`
+make harness-eval-online                      # CONFIG defaults to online-bigpickle
+# or, explicitly / for a variant config:
+make harness-eval-online CONFIG=online-bigpickle HARNESS_ARGS="--repeats 3"
+```
+
+No `make mlx-up` — the run needs **network** (and, if the gateway requires it, a
+one-time `opencode auth login`) but no local stack. The `online-bigpickle.json`
+lever config carries `external_provider` + `model_ref` + the deltas; its
+`description` is the in-ledger record of what is held vs. varied.
+
+**Identical where it proves soundness, provider-appropriate elsewhere.** Tools,
+prompt, subset, and scoring are held byte-identical to the Gemma arm. The recorded
+deltas: greedy sampling (`temperature=0.0`) and a shorter per-instance
+`timeout=240s` (the default 600s is tuned for ~8-12 tok/s Gemma and would
+over-generously cap a fast gateway model). Every delta is in the config `description`
+→ ledger `notes`, so the control is auditable.
+
+### Verdict (banded; histogram is primary)
+
+On the 8-instance tier≥3 subset:
+
+- **≤1/8 ⇒ harness broken** (same dead-zone as Gemma) — a mechanical bug; fix the
+  harness before trusting any item-16 lever signal.
+- **≥5/8 ⇒ harness sound** — the local 0/8 is genuinely capability-bound; item-16's
+  framing holds.
+- **2–4/8 ⇒ inconclusive** — opens item 22.5 (read one passing + one failing trace,
+  re-run the borderline instances at higher K to separate a real bug from gateway
+  run-to-run nondeterminism).
+
+**The histogram is the primary evidence, pass-rate secondary.** The
+`failure_category` taxonomy is provider-agnostic (derived from terminal `reason` +
+E0 metrics, never model identity), so BigPickle drops into the same 10-category
+vocabulary with zero code change. The "harness sound" signature is BigPickle landing
+mostly in **`ok`/`tests-failed`** (capability modes) with **ZERO
+`oom`/`degenerate-loop`/`no-edit`/`edit-mismatch`** (mechanical/harness modes).
+
+### Verdict (2026-06-24): HARNESS SOUND
+
+BigPickle scored **4/8** on the identical subset. The aggregate lands in the numeric
+*inconclusive* band, but the pre-registered 22.5 disambiguation (re-run the failures
+at the Gemma-identical 600s cap + read traces) resolves it on the histogram:
+
+| arm (same subset `b8733c486557`) | pass | failure histogram |
+|---|---|---|
+| Gemma-4-E4B baseline (K=3 mean) | **0/8** | `tests-failed`, `timeout`, `no-edit` — never one `ok` |
+| BigPickle @240s (22.3) | **4/8** | `ok`×4, `timeout`×2, `catastrophic-edit`×1, `no-edit`×1 |
+| BigPickle @600s (22.5, Gemma-identical) | **4/8** | `ok`×4, `tests-failed`×3, `catastrophic-edit`×1 |
+
+At the Gemma-identical 600s cap the failure modes are **100% capability modes**
+(`tests-failed`/`catastrophic-edit`) with **ZERO mechanical/harness modes** (no `oom`,
+`degenerate-loop`, `no-edit`, or `edit-mismatch`) — the exact "harness sound"
+signature. Trace reading confirmed the pipeline: a PASS (sympy-15345) captured a real
+`_print_Max/_print_Min` fix → 10 tests passed; the 22.3 `no-edit` (sympy-19007) was a
+genuine output-budget (`length`) cutoff with zero edit attempts, not a harness miss —
+at 600s it completes with a real edit and **F2P 1/3 partial**, proving the scorer reads
+actual pytest results. The 22.3 `timeout`/`no-edit` rows were artifacts of the
+deliberately-tightened 240s cap; at 600s they vanish.
+
+**Decisive contrast:** Gemma never writes a single correct fix (0 `ok` across 3
+repeats) while BigPickle writes 4 on the **identical** scaffolding — so the harness
+demonstrably *can* score passes, and the local 0/8 is genuinely **capability-bound**,
+not harness-broken. Item-16's framing holds; the GEPA/prompt work it gates is
+unblocked. One-shot control — re-run only after structural harness changes.
+
 ## Troubleshooting
 
 - **OOM / memory pressure on 16 GB** — stick to E4B (or drop to E2B). Close
