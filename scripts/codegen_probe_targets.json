@@ -1,0 +1,19 @@
+{
+  "local-gemma": {
+    "transport": "http",
+    "base_url": "http://127.0.0.1:8080/v1",
+    "model": "auto",
+    "api_key_env": null,
+    "temperature": 0.2,
+    "max_tokens": 1024,
+    "note": "Local Gemma-4-E4B QAT via the MLX repair proxy (:8080)."
+  },
+  "bigpickle": {
+    "transport": "opencode",
+    "model": "opencode/big-pickle",
+    "temperature": 0.2,
+    "max_tokens": 1024,
+    "enabled": true,
+    "note": "Online control model (opencode-hosted gateway) to isolate whether model SIZE is the blocker. Reached via `opencode run --format json -m opencode/big-pickle`."
+  }
+}

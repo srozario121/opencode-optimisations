@@ -160,16 +160,28 @@ def build_config_dir(cfg: dict, xdg_root: str, model_ref: str,
     if isinstance(data.get("provider"), dict):
         data["provider"].pop("mlx-small", None)
 
+    # Register the DETECTED served model id under the mlx-local provider, mirroring
+    # harness_eval.apply_levers. The cloned global config may key the model under a
+    # DIFFERENT path (config drift — the global config can lag the repo's current
+    # serving path), so `-m mlx-local/<served>` would otherwise 404 with
+    # ProviderModelNotFoundError. setdefault so an existing entry (and the clone's
+    # baseURL) is preserved; only fill what's missing.
+    served = model_ref.split("/", 1)[1] if "/" in model_ref else model_ref
+    prov = data.setdefault("provider", {}).setdefault(he.DEFAULT_PROVIDER, {})
+    prov.setdefault("npm", "@ai-sdk/openai-compatible")
+    prov.setdefault("name", "Local MLX (Gemma 4 QAT)")
+    prov.setdefault("options", {}).setdefault("baseURL", he.DEFAULT_BASE_URL)
+    prov["options"].setdefault("apiKey", "not-needed")
+    models = prov.setdefault("models", {})
+    models.setdefault(served, {"limit": {"context": 32768, "output": 4096}})
+    data["model"] = model_ref
+
     # Sampling lever — placed on the served model's options (opencode forwards a
     # custom-provider model's options into the OpenAI request; same path as
     # harness_eval.apply_levers).
-    served = model_ref.split("/", 1)[1] if "/" in model_ref else model_ref
     sampling = cfg.get("sampling") or {}
     if sampling:
-        prov = data.get("provider", {}).get(he.DEFAULT_PROVIDER, {})
-        models = prov.get("models", {})
-        if served in models:
-            models[served].setdefault("options", {}).update(sampling)
+        models[served].setdefault("options", {}).update(sampling)
 
     # Lever 1a — system prompt: a terse replacement for opencode's default build
     # prompt (per-agent prompt REPLACES, not appends — same as harness_eval).
@@ -572,6 +584,7 @@ class TestResult:
     checks_total: int
     checks: list[dict] = field(default_factory=list)   # [{name, passed}]
     wall_s: float = 0.0
+    failure_category: str = ""     # item 17: shared taxonomy (he.classify_failure)
 
 
 def grade_test(test: dict, calls: list[ToolCall], workdir: str,
@@ -632,8 +645,10 @@ def score_config(cfg: dict, tests: list[dict], model_ref: str, base_url: str,
         checks = grade_test(test, calls, workdir, pristine)
         cp = sum(1 for c in checks if c["passed"])
         ct = len(checks)
-        results.append(TestResult(test["id"], test["tier"], status, cp, ct,
-                                   checks=checks, wall_s=round(wall, 1)))
+        tr = TestResult(test["id"], test["tier"], status, cp, ct,
+                        checks=checks, wall_s=round(wall, 1))
+        tr.failure_category = he.classify_failure(asdict(tr))   # item 17
+        results.append(tr)
         print(f"  -> {cp}/{ct} checks  [{status}]  {round(wall,1)}s  "
               f"({len(calls)} tool calls)", flush=True)
         if status == "oom":

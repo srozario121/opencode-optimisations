@@ -47,6 +47,17 @@ DISABLE
                           opencode talks straight to mlx_lm.server.
   * MLX_PROXY_REPAIR=0   — keep the proxy in the path but pass through unmodified
                           (pure transparent forward; useful for A/B debugging).
+  * MLX_PROXY_CAPTURE=<dir> — dump each chat request + response to <dir> for
+                          tool-call-reliability debugging (item 16 L6 / the
+                          dropped-output mode). Off by default; never alters the
+                          served bytes. Streaming responses are teed as raw SSE.
+  * MLX_PROXY_NO_THINK=1 — inject chat_template_kwargs={"enable_thinking": false}
+                          into tool-enabled chat requests, so the Gemma-4 executor
+                          acts instead of stalling in a reasoning-only turn (item 16
+                          L6 / dropped-output). Off by default.
+  * MLX_PROXY_SEED=<int> — stamp a fixed `seed` on every chat request for
+                          reproducible runs (item 16 measurement fix — makes lever
+                          A/Bs comparable instead of sampling noise). Off by default.
 
 Stdlib only — no third-party deps (keeps it outside the mlx-lm/uvx environment).
 """
@@ -68,6 +79,59 @@ LISTEN_PORT = int(os.environ.get("MLX_PROXY_LISTEN_PORT", "8080"))
 UPSTREAM = os.environ.get("MLX_PROXY_UPSTREAM", "http://127.0.0.1:8081").rstrip("/")
 REPAIR = os.environ.get("MLX_PROXY_REPAIR", "1") != "0"
 RETRIES = int(os.environ.get("MLX_PROXY_RETRIES", "2"))
+
+# Optional request/response capture for tool-call-reliability debugging (item 16
+# L6 / the dropped-output mode: turns that spend tokens but yield no text/tool).
+# OFF unless MLX_PROXY_CAPTURE points at a directory; then each chat-completion
+# request + its response (json for the repaired non-streaming path, raw SSE for
+# the streaming pass-through) is dumped there. Env-gated + best-effort: it never
+# alters the bytes served to opencode. Lets the next harness run answer L6's open
+# question — does opencode stream tool calls, and what do the dropped turns emit?
+CAPTURE_DIR = os.environ.get("MLX_PROXY_CAPTURE") or ""
+
+# Disable Gemma-4 "thinking" on tool turns (item 16 L6). The Gemma-4 chat template
+# forces a thinking phase whenever `tools` are present; the weak E4B executor then
+# spends the turn on reasoning and emits EOS WITHOUT a tool call — the dominant
+# "dropped-output" baseline mode (verified 2026-06-23: a captured failing turn was
+# 509 reasoning chars, 0 tool calls, finish=stop; replaying it with
+# enable_thinking=False flipped finish_reason to tool_calls). When
+# MLX_PROXY_NO_THINK=1, inject chat_template_kwargs={"enable_thinking": false} into
+# tool-enabled chat requests so the executor acts instead of stalling in thought.
+# Off by default; an opencode-side/harness lever (request shaping), not an engine
+# change. Aligns with item 20's "keep the executor thin — tool-use > thinking".
+NO_THINK = os.environ.get("MLX_PROXY_NO_THINK", "0") != "0"
+
+# Fixed sampling seed for REPRODUCIBLE runs (item 16 measurement fix). The L6
+# n=4→n=8 reversal showed decoding here is stochastic (mlx default temp, no seed),
+# so single-run lever A/Bs are swamped by sampling variance. When MLX_PROXY_SEED is
+# an int, the proxy stamps it onto EVERY chat request (mlx-lm's server reads `seed`
+# from the request body — verified in mlx_lm/server.py). With a fixed seed + the
+# deterministic harness prompts, two runs of the same config produce the same
+# episodes, so a lever's delta is attributable instead of noise. Unset = off.
+SEED: "int | None"
+try:
+    SEED = int(os.environ["MLX_PROXY_SEED"])
+except (KeyError, ValueError):
+    SEED = None
+
+
+def _capture(cap_id: str, suffix: str, data) -> None:
+    """Best-effort dump of a captured request/response part. No-op if capture is
+    off; never raises into the request path."""
+    if not (CAPTURE_DIR and cap_id):
+        return
+    try:
+        os.makedirs(CAPTURE_DIR, exist_ok=True)
+        path = os.path.join(CAPTURE_DIR, f"{cap_id}.{suffix}")
+        if isinstance(data, (bytes, bytearray)):
+            with open(path, "wb") as f:
+                f.write(data)
+        else:
+            with open(path, "w") as f:
+                f.write(data if isinstance(data, str)
+                        else json.dumps(data, indent=2, ensure_ascii=False))
+    except Exception:  # noqa: BLE001 — capture must never break the proxy
+        pass
 
 # Out-of-band tracing: emit one OTLP span per chat request carrying the SYSTEM
 # PROMPT. opencode's otel plugin can't see the system prompt (its plugin API
@@ -370,6 +434,29 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 req_obj = None
 
+        # L6 capture (off unless MLX_PROXY_CAPTURE set): record the request so the
+        # response can be paired with it under the same id by the responders.
+        self._cap_id = ""
+        if CAPTURE_DIR and is_chat:
+            self._cap_id = f"{start_ns}-{threading.get_ident()}"
+            meta = {
+                "ts_ns": start_ns, "path": path,
+                "stream": bool(isinstance(req_obj, dict) and req_obj.get("stream")),
+                "has_tools": bool(isinstance(req_obj, dict) and req_obj.get("tools")),
+                "n_messages": (len(req_obj.get("messages", []))
+                               if isinstance(req_obj, dict) else 0),
+                "session": (self.headers.get("x-session-id")
+                            or self.headers.get("x-session-affinity")),
+            }
+            _capture(self._cap_id, "req.json", {"meta": meta, "body": req_obj})
+
+        # Reproducibility: stamp a fixed seed onto every chat request (see SEED).
+        # Done here (before _dispatch branches) so it covers BOTH the streaming
+        # pass-through and the non-streaming repair path, and tool + title turns.
+        if SEED is not None and is_chat and isinstance(req_obj, dict):
+            req_obj["seed"] = SEED
+            body = json.dumps(req_obj).encode()
+
         try:
             return self._dispatch(method, path, body, req_obj)
         finally:
@@ -392,6 +479,16 @@ class Handler(BaseHTTPRequestHandler):
         # through. With REPAIR off the proxy is a pure transparent forwarder.
         if not (REPAIR and isinstance(req_obj, dict) and req_obj.get("tools")):
             return self._passthrough(method, path, body)
+
+        # L6: strip the executor's "thinking" phase on tool turns (see NO_THINK).
+        # Mutate the parsed request + re-serialize so BOTH the streaming pass-through
+        # (sends `body`) and the non-streaming repair path (rebuilds from `req_obj`)
+        # carry the kwarg.
+        if NO_THINK:
+            kw = dict(req_obj.get("chat_template_kwargs") or {})
+            kw.setdefault("enable_thinking", False)
+            req_obj["chat_template_kwargs"] = kw
+            body = json.dumps(req_obj).encode()
 
         # mlx-lm 0.31.3 streams Gemma 4 tool calls correctly, token by token. The
         # #1125 ValueError only surfaces as a fatal HTTP 500 on the NON-streaming
@@ -447,6 +544,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             data = _repair(data)
 
+        _capture(getattr(self, "_cap_id", ""), "resp.json", data)
         return self._send_json(200, data)
 
     # -- responders -----------------------------------------------------------
@@ -473,15 +571,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         # Read line by line, not in fixed blocks: SSE is newline-delimited and a
         # block read would stall until the buffer fills, defeating streaming.
+        cap_id = getattr(self, "_cap_id", "")
+        teed: list[bytes] = []
         while True:
             line = r.readline()
             if not line:
                 break
+            if cap_id:
+                teed.append(line)
             try:
                 self.wfile.write(line)
                 self.wfile.flush()
             except BrokenPipeError:
                 break
+        if cap_id and teed:
+            _capture(cap_id, "resp.sse", b"".join(teed))
 
     def _send_json(self, code, obj):
         payload = json.dumps(obj).encode()
