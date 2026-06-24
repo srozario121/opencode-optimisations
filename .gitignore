@@ -15,5 +15,12 @@ __pycache__/
 # logs / local run artifacts
 logs/
 
+# item-21 code-mode probe/A-B local result ledgers + episode transcripts (regenerable;
+# conclusions live in docs/sandbox-codeexec-research.md)
+scripts/_codemode_ab_runs/
+scripts/codegen-probe.jsonl
+scripts/codemode-ab.jsonl
+scripts/codemode-prod-ab.jsonl
+
 # macOS
 .DS_Store

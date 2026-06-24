@@ -475,6 +475,152 @@ delegates to subagents (`subagent_type`, background, resume).
       the loop rate (no source answers this)? is multi-agent actually worse on *this*
       stack, or did the literature mislead? Gated behind item 16 (needs E0 metrics).
 
+### 21. Sandboxed code-execution for parallel/chained tool calls  ← deep-research item
+
+**Goal.** Investigate whether driving tool calls through a **code-execution sandbox**
+(the "code mode" / "code execution with MCP" pattern — e.g. the **Monty** Python
+sandbox, Cloudflare Code Mode, Anthropic's code-execution-with-MCP) lets the agent
+**batch, chain, and parallelise tool calls in a single rollout** instead of the
+current one-tool-call-per-round-trip flat ReAct loop. **Why it matters here:** every
+tool call currently returns to the main agent and forces a fresh decode pass; at
+**8–12 tok/s** those round-trips dominate wall-clock. If the model can emit one code
+block that runs N tool calls (sequential *and* parallel) in the sandbox and returns
+only the final result, we cut decode passes — potentially the single biggest
+wall-clock lever on a slow local model. **Risk to weigh:** asking a weak 4B model to
+*write correct orchestration code* may be harder than emitting one tool call, and
+could induce new failure modes (cf. item-20's "full thinking collapses the 4B");
+sandbox infra adds offline/16 GB-M1 constraints. **GATED behind item 16** (needs E0
+instrumentation to measure round-trip cost and any new failure modes).
+
+- [x] **21.1 Deep-research survey** — **DONE** (2026-06-23, run `wf_42940d55-80e`;
+      18 sources, 85 claims → 19 confirmed / 6 refuted). Findings + citations:
+      `docs/sandbox-codeexec-research.md`.
+      **Verdict:** the **mechanism is sound and "Monty" is deployable offline**, but the
+      **make-or-break weak-model question fails on current evidence** — prototype only
+      after measuring local code-gen success.
+      - **Monty = Pydantic Monty** (3-0): a from-scratch Python-subset bytecode VM in Rust,
+        in-process, **~5 MB / ~µs start**, zero-access-by-default, MIT, **fully offline** —
+        the lowest-overhead, only-fully-offline-in-process option (vs Pyodide ~2 s,
+        Cloudflare workerd cloud/JS closed-beta, E2B/Firecracker cloud/microVM). But it's
+        **alpha (v0.0.18, Python subset, codemode integration unshipped)** — clashes with
+        the "frozen stack" rule; the *pattern* transfers, the package is a moving target.
+      - **Round-trip elimination is real** (3-0): control flow + intermediate state run
+        *inside* the emitted code (zero model calls); large results filtered in-sandbox.
+        **But published wins are modest and frontier-sourced** — weather agent 4→2 calls,
+        12.2 s→9.1 s, $0.019→$0.017 on **Sonnet 4.5**; the 99.9%/98.7% figures are static
+        API-exposure footprint, **not** end-to-end (real end-to-end ~32–81%); Anthropic's
+        150k→2k figure was **REFUTED (0-3)**.
+      - **❌ Weak-model (≤7B): no positive evidence, substantial against** (3-0). Documented
+        **"structure tax"** — small models can't juggle syntax + orchestration; HF
+        recommends structured code-agents only for **"32B+ or frontier."** SLM pass@1 <0.10;
+        CodeAct's "20%" is GPT-4 (Mistral-7B 0% on M3ToolEval). Multiple pro-weak-model
+        claims **actively refuted** (0-3 / 1-2). **One nuance FOR us:** the tax condemns
+        *JSON-wrapped* code; **plain markdown code blocks** (closer to Monty usage) are
+        **less penalized** — the one thread worth pulling.
+      - **Stack upside:** at 8–12 tok/s each round-trip is far costlier than on cloud, so
+        savings are proportionally **larger here — IFF the model writes correct code.**
+      **[lit-only]** per the Evidence policy: citation-checked, not measured here. The
+      decisive number — Gemma-4-E4B orchestration-code-gen pass@1 — is **unmeasured**;
+      21.3 is its local validation, and 21.2's first experiment must measure it before
+      committing (see `docs/sandbox-codeexec-research.md` open questions).
+- [x] **21.2a Decisive experiment — local code-gen pass@1 — DONE, GATE PASSED**
+      (2026-06-23). Built `scripts/codegen_probe.py`: model-agnostic probe, 6 frozen
+      orchestration tasks (chain 2–5 mock host tools + loop/conditional → one **markdown**
+      code block → `result`), graded by execution-against-mocks (hardcoding rejected; tool
+      calls counted at runtime). Ran local Gemma-4-E4B vs the online control
+      `opencode/big-pickle`, k=3.
+      **Result: local-gemma pass@1 = 1.0 (18/18) === bigpickle pass@1 = 1.0 (18/18), Δ=0.0.**
+      **Size is NOT the blocker at this tier** — the 4B emits correct orchestration code as
+      reliably as a frontier model. This **locally REFUTES 21.1's `[lit-only]` "structure
+      tax" negative** (markdown, not JSON-wrapped, as predicted). Ledger:
+      `scripts/codegen-probe.jsonl`; full writeup: `docs/sandbox-codeexec-research.md`
+      (Empirical addendum). **Limits:** tasks are simple/moderate (≤7 calls, single-level
+      control, ≤6 tools, no parallelism/nesting/error-handling); k=3; restricted `exec` not
+      Monty's subset; clean prompt. So this is **green-light-to-prototype, not a closed win.**
+- [x] **21.2b Harder tier + real Monty engine — DONE, gate holds at complexity** (2026-06-23).
+      Extended `scripts/codegen_probe.py` with a **hard tier** (5 tasks: nested loops, `try/except`
+      error-handling, argmax, filter chain, sort/select) over the **full 13-tool menu** (with
+      distractors → forces tool selection), wired the real **`pydantic_monty` v0.0.18** engine
+      (`external_functions` + `max_duration_secs`), and added `--engines exec monty` to grade the
+      SAME output through both VMs apples-to-apples. k=5. Writeup: `docs/sandbox-codeexec-research.md`
+      (Empirical addendum 2).
+      **Results:**
+      - **Gemma-4-E4B hard tier: exec 1.0 (25/25) AND monty 1.0 (25/25).** Combined with 21.2a
+        (base 18/18), local model is **50/50 under exec across both tiers** — the structure tax
+        still doesn't bite. Gate holds at higher complexity.
+      - **Monty's alpha dialect DOES tax — but it hits the FRONTIER model, not Gemma.** big-pickle
+        hard: exec 1.0 vs **monty 0.84** (Δ=−0.16, all failures on `longest_file`). Root cause
+        (reproduced): Monty v0.0.18 rejects `max(items, key=lambda x: <host-tool call>)`
+        ("external functions not yet supported") and `dict.get()`. **Gemma scored monty 1.0 because
+        it writes plainer explicit loops, not idiomatic one-liners** — its simpler style dodges the
+        dialect gaps that bite the frontier model. Counterintuitive but mechanistically clear.
+      - **Bonus:** the hard tier caught a grader bug (restricted `exec` lacked `Exception`, unfairly
+        failing `try/except` code) — fixed.
+      **Takeaways for 21.3:** (1) code-mode is viable on this stack even with a plain restricted
+      `exec` (Gemma 1.0 both tiers) — Monty is optional, adds only isolation; (2) if using Monty,
+      the dialect risk is currently *unrealized for Gemma* but fragile (style-dependent) — cheap
+      mitigation = a prompt note preferring explicit loops / avoiding `max(key=…)` over tool calls
+      and `dict.get`; (3) k=5 is strong-not-tight — raise k for final sign-off.
+- [x] **21.3 End-to-end round-trip A/B — DONE (prototype), HYPOTHESIS CONFIRMED** (2026-06-23).
+      Built `scripts/codemode_ab.py`: same multi-step tasks run two ways on the live local model —
+      **flat ReAct** (one tool call per decode pass, JSON action protocol) vs **code-mode** (one
+      sandboxed code block, ~1 pass). Raw MLX endpoint (:8081) to avoid the proxy's tool-call
+      parser confounding the text protocol. 6 round-trip-heavy tasks, k=2. Writeup:
+      `docs/sandbox-codeexec-research.md` (Empirical addendum 3).
+      **Result (mean per task):**
+      | arm | pass@1 | passes | wall_s | tokens |
+      | --- | --- | --- | --- | --- |
+      | flat ReAct | **0.333** | 10.67 | **245 s** | 8301 |
+      | code-mode  | **1.0**   | 1.0   | **40 s**  | 715  |
+      → code-mode **−90.6% decode passes · −83.5% wall-clock · −91.4% tokens · +0.667 pass@1**.
+      ReAct **failed by non-termination on 4/6 tasks** (item-16's no-tool-stop/churn pathology);
+      code-mode was **12/12 correct, always 1 pass**, and won even on the 2 tasks ReAct finished.
+      The wall-clock gap exceeds the pass-count gap because flat ReAct re-prefills a growing context
+      (returned file bodies re-enter every turn) while code-mode prefills once and never shows the
+      model the intermediate data. **Caveats:** proxy harness with mock tools (not real opencode);
+      ReAct's 0.333 is a lower bound (JSON protocol may be harder than native tool-calls — but
+      item-16 found the same churn natively); n modest (k=2×6) but effect huge and consistent.
+- [x] **21.4a Wire code-mode into real opencode — DONE & live-verified** (2026-06-24).
+      Shipped `scripts/codemode_exec.py` (real executor: the validated sandbox bound to REAL
+      host-tools `read_file`/`read_lines`/`list_files`/`glob`/`grep`, `bash`/`write_file` opt-in,
+      paths can't escape root, JSON envelope) + `.opencode/tools/codemode.ts` (opencode tool →
+      `Bun.spawn` → executor; model writes Python, runs out-of-process). Writeup:
+      `docs/sandbox-codeexec-research.md` (Empirical addendum 4).
+      **Verified end-to-end:** executor selftest → real-repo run (9 host-ops in one pass) →
+      Bun↔Python wiring → `opencode serve` registration (codemode loaded, no errors) → **live
+      capstone: local Gemma invoked `codemode` NATIVELY in one tool call** through the full agent
+      loop + repair proxy (one glob + 8 reads, one decode). The round-trip collapse works in
+      production.
+      **Bug caught & fixed by the capstone:** model used `read_lines(p, 1, None)` expecting
+      1-indexed lines; the tool was 0-indexed slice → off-by-one. Fixed to 1-indexed inclusive
+      (matches the `read` tool's gutter). Lesson: host-tool signatures must match NL intuition —
+      a class of footgun only a real run surfaces.
+- [x] **21.4b Production A/B on real opencode — DONE (directional), 21.3 win TEMPERED** (2026-06-24).
+      Built `scripts/codemode_prod_ab.py` (baseline vs codemode-enabled opencode on the
+      `harness_micro_fixtures` repo, reusing harness_micro's config/episode/transcript machinery).
+      3 tasks, k=1. Writeup: `docs/sandbox-codeexec-research.md` (Empirical addendum 5).
+      **Result — the win is REAL but TASK-DEPENDENT, not the proxy's 5×:**
+      | task | baseline | codemode |
+      | --- | --- | --- |
+      | count_lines | 1 call (`bash wc`), 94s ✓ | 1 call, 72s ✓ (−24%) |
+      | def_count | 4 calls (`grep`×4), 342s ✓ | 2 calls, 150s ✓ (−50% calls, −56% wall) |
+      | find_clamp | timeout/0-calls ✗ | timeout/0-calls ✗ |
+      **Decisive correction:** real opencode has **`bash`**, itself a "code mode" — the model
+      self-batched `count_lines` into one `wc` call, so codemode's edge shrank to ~24%. **21.3's 5×
+      was inflated by a bash-less mock baseline.** codemode still clearly wins when the model does
+      NOT self-batch (def_count: grep×4 → 2 calls). And it does **NOT** fix the degenerate-loop
+      (find_clamp timed out on BOTH arms, 0 calls — item-16 pathology). **Verdict:** keep `codemode`
+      enabled (never lost, won the non-self-batched case), cite 21.3's 5× as a *bash-less upper
+      bound*, and don't expect a headline pass-rate move until item-16's degenerate-loop is fixed.
+      **Caveats:** k=1 directional (find_clamp double-timeout needs more samples); 3 small tasks;
+      transcript-substring grading.
+- [ ] **21.4c (optional follow-up) — firm up + find code-mode's real niche.** Raise k (≥5) and add
+      tasks where bash is a poor fit (structured/multi-step parsing, conditional logic on file
+      contents) — the regime where codemode should separate cleanly from a `bash` baseline. Re-run
+      after item-16's degenerate-loop fix lands (so find_clamp-style tasks don't just time out).
+      Only then make the final adopt/reject + decide whether to enable `codemode` by default in the
+      global config. **Gated behind item 16.**
+
 ---
 
 ## Notes / open questions
