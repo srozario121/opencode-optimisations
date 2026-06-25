@@ -8,8 +8,7 @@ claude-mem memory and the `docs/` research.
 > toolkit (`admin`), where the original 2,475-line TODO.md (items 1–16) lived.
 > That ledger did not come across — items 1–16 were reconstructed from claude-mem
 > cross-session memory so the numbering stays continuous. Items 1–15, **16, 17, 21,
-> and 22** are recorded here; the open work (items 18, 19, 20, and the optional 21.4c
-> follow-up) remains in `TODO.md`.
+> and 22** are recorded here; the open work (items 18, 19, 20) remains in `TODO.md`.
 
 ## Done (items 1–15)
 
@@ -155,5 +154,36 @@ claude-mem memory and the `docs/` research.
     codemode's edge shrinks to ~24%; it still clearly wins non-self-batched cases
     (def_count grep×4 → 2 calls, −56% wall) and never lost, but does **not** fix the
     degenerate-loop. **codemode kept enabled**; cite 21.3 as a bash-less upper bound.
-  - **21.4c** (firm up k≥5 + find code-mode's niche vs `bash`; final adopt/reject)
-    remains **open in `TODO.md`**, gated behind item 16.
+  - **21.4c** firmed up at **k=5** on **bash-hostile** tasks (multi-step parse,
+    conditional aggregation, cross-file reasoning) vs the same bash-equipped baseline
+    — `scripts/codemode_niche_ab.py`, ledger `codemode-niche-ab.jsonl`, 4 tasks ×
+    k=5 × 2 arms = 40 episodes at the 600s Gemma cap. **Code-mode's real niche is
+    confirmed — but it is a RELIABILITY/LATENCY win, not a correctness win.** Overall
+    (20 episodes/arm): **termination 1.00 vs 0.80** (baseline timed out at 600s on
+    20%; codemode never did), **wall-clock 150.6s vs 286.9s (~1.9× faster**, ~2.2–2.9×
+    on the two timeout-prone tasks), **round-trips 1.55 vs 2.65 calls** — yet
+    **correctness REGRESSED, 0.55 vs 0.80**. Per-task the separation is clean and
+    mechanistic: on `const_sum`/`add_docstring_count` the baseline can't express the
+    parse as a shell one-liner, falls into grep/read churn, and **times out 40%** of
+    the time, while codemode single-shots it (ok 1.0, ~3× faster); on `orphan_count`
+    the baseline's grep-churn (7.6 calls) lands the right answer **5/5** where codemode
+    collapses to 2 calls but is **1/5 correct** (the weak Gemma writes buggy
+    orchestration code — e.g. `name.isalpha()` rejecting underscore constants); on
+    `sentinel_digit_sum` (a single-call task) the arms are **identical** and the model
+    **doesn't even invoke codemode** (used `grep`). Two enabling facts surfaced: the
+    sandbox is **builtins-only** (the model reaches for `import re` and the call dies —
+    a `no-import` nudge is required for code-mode to work on parse tasks), and the
+    bash-equipped baseline **never actually used `bash` (0%)** on these tasks — even
+    when available, the weak model defaults to grep/read round-trips when there's no
+    clean shell one-liner, which refines 21.4b: `bash` only tempers code-mode where a
+    one-liner exists. **Verdict — ADOPT (keep `codemode` enabled/available):** it is a
+    net-positive, never-times-out tool that ~3×-speeds and de-churns genuinely
+    multi-step tasks, and the model selects it ~75% of the time on those. **But do NOT
+    add a default-on global nudge steering the model into it:** on the frozen
+    capability-bound model it converts churn-to-timeout into fast-but-wrong (the
+    bottleneck shifts from round-trips to code quality — the same item-16 wall), so a
+    forced default trades correctness for speed. Revisit the default-on question only
+    if model capability moves (items 16/19). New `codemode_niche_ab.py` is ruff- +
+    mypy-clean and its offline `selftest` passes (pre-existing ruff/mypy debt in the
+    sibling `codegen_probe.py`/`codemode_ab.py`/`codemode_prod_ab.py` is untouched and
+    out of scope). Doc: `docs/codemode-setup.md`.

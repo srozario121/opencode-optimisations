@@ -1,7 +1,7 @@
 # TODO — opencode-optimisations
 
 The repo's running work-ledger. Items **18–20** are the open work from the
-2026-06-22 planning session (plus item 21's optional 21.4c follow-up). **Completed
+2026-06-22 planning session. **Completed
 items 1–15, 16, 17, 21, and 22 now live in `CHANGELOG.md`.** Item 16 (the dominant
 harness bottleneck) closed 2026-06-25: the L0–L6 mechanical-lever sweep is complete
 and the 0/8 is **capability-bound, not a harness defect** — so prompt/skill work
@@ -397,26 +397,29 @@ delegates to subagents (`subagent_type`, background, resume).
       the loop rate (no source answers this)? is multi-agent actually worse on *this*
       stack, or did the literature mislead? Item-16 gate satisfied (E0 metrics exist).
 
-### 21. Sandboxed code-execution ("code mode") — 21.1–21.4b DONE (see `CHANGELOG.md`)
+### 21. Sandboxed code-execution ("code mode") — DONE (see `CHANGELOG.md`)
 
-**The bulk of item 21 is complete and recorded in `CHANGELOG.md`** (21.1 survey →
-21.2a/b local code-gen gate PASSED → 21.3 round-trip A/B → 21.4a wired into real
-opencode → 21.4b production A/B). **Net so far:** code-mode is viable on this stack
-(Gemma-4-E4B writes correct orchestration code, pass@1 1.0 both tiers — the lit
-"structure tax" does not bite here); `codemode` is **kept enabled**; the 21.3 5× win
-is **tempered** by real opencode's `bash` (the model self-batches), and code-mode
-does **not** fix the item-16 degenerate-loop. Only the optional follow-up remains:
+**Item 21 is fully complete and recorded in `CHANGELOG.md`** (21.1 survey → 21.2a/b
+local code-gen gate PASSED → 21.3 round-trip A/B → 21.4a wired into real opencode →
+21.4b production A/B → 21.4c niche firm-up). **Net verdict:** code-mode is viable on
+this stack and **kept enabled/available** — it is a confirmed **reliability + latency**
+win (never times out, ~1.9–2.9× faster, fewer round-trips) on genuinely multi-step /
+bash-hostile tasks, and the model selects it ~75% of the time there. **But it is NOT a
+correctness win on the frozen weak model** (21.4c: overall correctness regressed
+0.80→0.55 — it single-shots a buggy answer where the baseline's grep-churn grinds to a
+correct one), so **no default-on global nudge** is added; the bottleneck shifts from
+round-trip churn to code quality = the same item-16 capability wall. Revisit default-on
+only if model capability moves (items 16/19).
 
-- [ ] **21.4c (optional follow-up) — firm up + find code-mode's real niche.** Raise k (≥5) and add
-      tasks where bash is a poor fit (structured/multi-step parsing, conditional logic on file
-      contents) — the regime where codemode should separate cleanly from a `bash` baseline.
-      Only then make the final adopt/reject + decide whether to enable `codemode` by default in the
-      global config. **Item-16 gate update (2026-06-25):** item 16 closed **without** a
-      degenerate-loop fix — the L0–L6 sweep found the timeouts are a capability/varied-churn mode,
-      not an opencode-detectable loop (L5 rejected), so no fix is coming. So drop the original
-      "wait for the loop fix" precondition: find_clamp-style tasks **will** still sometimes time out
-      on a weak model — design 21.4c tasks to tolerate that (more samples, or tasks that complete
-      within budget) rather than waiting on a fix that won't land.
+- [x] **21.4c — firm up (k=5) + find code-mode's real niche.** DONE 2026-06-25.
+      `scripts/codemode_niche_ab.py` (own ledger, offline selftest, ruff+mypy clean):
+      4 bash-hostile tasks × k=5 × 2 arms vs the same bash-equipped baseline. Niche
+      **confirmed as reliability/latency, not correctness** (termination 1.0 vs 0.8,
+      wall 150.6s vs 286.9s, calls 1.55 vs 2.65; correctness 0.55 vs 0.80). Surfaced two
+      facts: the sandbox is **builtins-only** (needs a `no-import` nudge) and the
+      bash-equipped baseline **never used `bash`** on parse tasks (defaults to grep/read
+      churn → timeouts), refining 21.4b. **Final: ADOPT (enabled), no forced default.**
+      Full record + per-task numbers in `CHANGELOG.md`.
 
 ### 22. Online-model harness-soundness control (BigPickle / free opencode mode)  ▲ — diagnostic for item 16
 
