@@ -9,6 +9,14 @@ For the narrative background and design rationale see the *Tracing* section of
 [`opencode-local.md`](opencode-local.md); **this page is the operational setup
 reference.**
 
+> **Jaeger is a *live human debugging* aid, not a programmatic data source.** The
+> all-in-one backend is in-memory only (cleared on stop), best-effort/ephemeral, and
+> its spans carry no per-token text. So the **item-18 recommender does not read
+> Jaeger** — it ingests the durable per-episode `opencode.jsonl` + `ledger.jsonl` +
+> `tier-report.jsonl` corpus instead (see `opencode-local.md`, *Improvement-
+> recommender*). Use Jaeger to watch a single run unfold; use the jsonl corpus for any
+> aggregate/automated analysis.
+
 ---
 
 ## Why this is more than "turn tracing on"

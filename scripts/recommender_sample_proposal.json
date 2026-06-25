@@ -1,0 +1,60 @@
+{
+  "recommendations": [
+    {
+      "rank": 1,
+      "failure_mode": "no-edit",
+      "evidence": {
+        "instances": ["sympy__sympy-12481", "sympy__sympy-11400", "sympy__sympy-19007"],
+        "metric_deltas": "no-edit is the highest-frequency mode (count 33; T3=16, T4=17). Its signature is the dropped-output/thinking-stop fingerprint: dropped_output_rate 0.636 with made_edit_rate only 0.061, yet mean_output_tokens 1146 spent over just mean_tool_call_rounds 2.55 / mean_steps 3.55 — the model emits reasoning/output but the turn stops before a patch ever lands (mean_steps_to_first_edit 6.5 is never reached). common_errored_tools shows edit:4, i.e. the few edit attempts that fire also error out."
+      },
+      "lever": "L2 greedy sampling + L3 terse tool-use-protocol prompt (read-before-edit, emit-the-edit-call)",
+      "rationale": "The no-edit signature (high output tokens, ~zero edits, dropped_output_rate 0.636) is the item-16 dropped-output / thinking-stop defect: Gemma-4 spends its budget on prose and the turn stops before emitting a valid edit tool-call. L2 (greedy/near-greedy temperature) is the function-calling standard (BFCL temp~0) and directly hardens the fragile Gemma-4 tool-call path so an edit call is actually emitted; L3 a terse, model-appropriate prompt with an explicit read-then-edit protocol recovers context tokens and focuses behaviour toward landing a patch. Both are pure-config keys (sampling, system_prompt) — the docs rank L2 #2 and L3 #3 in the shortlist, the two cheapest levers that bite this exact tool-call-fidelity mode. Stays [tool-proposed] until an 18.3 K>=3 A/B closes it.",
+      "kind": "runnable-config",
+      "config": {
+        "name": "proposed-greedy-toolprotocol",
+        "description": "Lowers temperature to near-greedy (L2) and replaces the long frontier-tuned system prompt with a terse small-model tool-use protocol (L3: read-before-edit, always emit the edit tool-call, small-scope edits). Targets the no-edit dropped-output/thinking-stop mode.",
+        "sampling": { "temperature": 0.0, "top_p": 1.0 },
+        "opencode_config": {},
+        "env": {},
+        "system_prompt": "You are a coding agent fixing one bug in a Python repo. Protocol: (1) locate the defect with grep/read; (2) READ the exact lines before editing; (3) emit a single edit tool-call with the minimal change — do not describe the change in prose instead of calling the edit tool; (4) run the failing test. Always finish a turn by emitting a tool-call, never by stopping mid-reasoning."
+      },
+      "needs_implementation": null
+    },
+    {
+      "rank": 2,
+      "failure_mode": "edit-mismatch",
+      "evidence": {
+        "instances": ["sympy__sympy-15345", "sympy__sympy-13043"],
+        "metric_deltas": "The item-16 hand trace-review attributes an edit gutter/whitespace mismatch to these two instances. In the digest this surfaces as edit appearing in common_errored_tools (no-edit edit:4, timeout edit:7): the edit tool errors and no patch lands rather than failing on test content. The auto-classifier leaves the edit-mismatch taxonomy slot at count 0 because a whitespace-rejected edit is bucketed as no-edit/timeout, so this mode is only recoverable from the trace-review, not the histogram."
+      },
+      "lever": "whitespace/gutter-tolerant edit matcher",
+      "rationale": "The edit tool rejects an otherwise-correct patch when leading-whitespace/gutter context does not match byte-for-byte (item-16 trace-review on 15345/13043). The lever schema (sampling/system_prompt/opencode_config/env/...) cannot express a string-matching algorithm change — fixing the matcher requires new code in the edit shadow tool, so this is needs-implementation, not a runnable config. A whitespace-tolerant matcher would let the model's correct-intent edits land instead of erroring into the no-edit bucket.",
+      "kind": "needs-implementation",
+      "config": null,
+      "needs_implementation": {
+        "target_seam": ".opencode/tools/edit.ts",
+        "why": "A whitespace/indent-tolerant fuzzy matcher is an algorithm change in the edit tool's apply path; no config key (sampling/prompt/env/opencode_config) can express it, and the recommend --validate check rejects any non-schema key. Must be a shadow-tool code change."
+      }
+    },
+    {
+      "rank": 3,
+      "failure_mode": "degenerate-loop",
+      "evidence": {
+        "instances": ["sympy__sympy-19007"],
+        "metric_deltas": "The item-16/CHANGELOG note records a 364-round non-termination on sympy-19007. In the digest this rolls into the timeout mode (19007 is in timeout.instances; ranked_cells timeout/T4 lists it), whose signature is the loop fingerprint: mean_tool_call_rounds 34.25 and mean_steps 35.12 with timed_out_rate 1.0 — churn without progress (made_edit_rate only 0.438). degenerate_loop_rate reads 0.0 because the auto-classifier scores the wall-clock cap as timeout rather than detecting the loop, so the 364-round loop is only recoverable from the prior-work note."
+      },
+      "lever": "L4 stale-tool-output pruning (compaction.prune) + repeated-round / no-progress cap",
+      "rationale": "On 19007 the model churns tool-call rounds (mean_tool_call_rounds 34.25 under timeout) without converging — the 364-round loop. L4 stale-output pruning (compaction.prune true, the docs' #4 lever) is a pure-config flag that collapses the stale-observation context that feeds the loop and is most valuable on a tiny OOM-bounded window, so it is shipped here as a runnable config. The complementary hard fix — a repeated-round / no-net-progress detector that aborts the loop instead of letting it run to the wall-clock cap — is a harness-seam change the lever schema cannot express, so it is flagged separately rather than smuggled into this config. Priority: ranked last because 19007's loop is a T3/T4-only signal (movable:false, priority_signal 0) — reported per spec but not a T1/T2 climb target.",
+      "kind": "runnable-config",
+      "config": {
+        "name": "proposed-prune-loopguard",
+        "description": "Enables stale-tool-output pruning (compaction.prune) to collapse the stale-observation context that drives non-terminating tool-call loops. Targets the degenerate-loop / 364-round non-termination on 19007 that the classifier currently scores as timeout.",
+        "sampling": {},
+        "opencode_config": { "compaction": { "prune": true } },
+        "env": {},
+        "system_prompt": null
+      },
+      "needs_implementation": null
+    }
+  ]
+}

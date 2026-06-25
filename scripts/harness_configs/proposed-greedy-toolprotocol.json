@@ -1,0 +1,11 @@
+{
+  "name": "proposed-greedy-toolprotocol",
+  "description": "Lowers temperature to near-greedy (L2) and replaces the long frontier-tuned system prompt with a terse small-model tool-use protocol (L3: read-before-edit, always emit the edit tool-call, small-scope edits). Targets the no-edit dropped-output/thinking-stop mode.",
+  "sampling": {
+    "temperature": 0.0,
+    "top_p": 1.0
+  },
+  "opencode_config": {},
+  "env": {},
+  "system_prompt": "You are a coding agent fixing one bug in a Python repo. Protocol: (1) locate the defect with grep/read; (2) READ the exact lines before editing; (3) emit a single edit tool-call with the minimal change \u2014 do not describe the change in prose instead of calling the edit tool; (4) run the failing test. Always finish a turn by emitting a tool-call, never by stopping mid-reasoning."
+}

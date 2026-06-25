@@ -107,6 +107,9 @@ python scripts/harness_eval.py tier
 # render + persist the tiered report (also runs inside `summary` and every `run`)
 python scripts/harness_eval.py report
 
+# (item 18) Layer-1 evidence digest over the on-disk episode/ledger corpus
+python scripts/harness_eval.py recommend
+
 # offline sanity (no model): classifier branches, tier buckets, report render
 python scripts/harness_eval.py selftest
 ```
@@ -114,3 +117,18 @@ python scripts/harness_eval.py selftest
 A normal `run` (either harness) appends to the ledger and regenerates both
 `summary.md` and `tier-report.jsonl`, so the gradient stays current with no extra
 step.
+
+## The recommender consumes this report (item 18)
+
+Item 18's improvement-recommender reads exactly these artifacts — the per-episode
+`opencode.jsonl` (E0 metrics via `parse_episode_jsonl`), the `ledger.jsonl` rows,
+and `tier-report.jsonl` — and aggregates them by `failure_category × tier` into an
+**evidence digest** (`harness_eval.py recommend`). The digest reuses this doc's two
+primitives unchanged: `classify_failure` for the mode vocabulary and `instance_tier`
+for the ladder, so it speaks item-17's language with no new enum. Its `ranked_cells`
+order cells by `count × headroom × movable` — and because **T3/T4 carry
+`movable: false`** (the stable 0/8 capability wall), the priority hint zeroes them
+out and surfaces only the T1/T2 rungs item 19 can actually climb. An Opus-4.8
+proposer then turns that digest into ranked item-17 lever configs (run via
+`harness_eval.py run`), closing the loop back onto this same report. See
+`docs/opencode-local.md` (item 18) for the full two-layer design.

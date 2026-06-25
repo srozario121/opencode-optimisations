@@ -509,13 +509,27 @@ build/validation decisions were **user-confirmed 2026-06-24**.
   failure-mode vs baseline. *(user-confirmed 2026-06-24; proposer = Opus 4.8 per
   user-revision 2026-06-24)*
 
-- [ ] **18.1 Episode-corpus ingestion** (`harness_eval.py recommend`, part 1) — load
-      the on-disk `opencode.jsonl` + `ledger.jsonl` + `tier-report.jsonl` and structure
-      per-episode: tool-call sequence, retries, errored-call events, latency-to-first-tool,
-      output-tokens, steps-to-first-edit, **and degenerate-loop signal** (all already
-      produced by `parse_episode_jsonl` — reuse it, do not reimplement). Aggregate by
-      `failure_category` × tier across runs. **No Jaeger dependency.**
-- [ ] **18.2 Recommendation surface (Claude Code / Opus 4.8 proposer)** — feed the
+- [x] **18.1 Episode-corpus ingestion** (`harness_eval.py recommend`, part 1) — **DONE**
+      (2026-06-25). `build_evidence_digest` loads the on-disk `ledger.jsonl` (over the
+      per-episode `opencode.jsonl` E0 metrics + `tier-report.jsonl` vocabulary) and
+      aggregates by `failure_category` × tier: per mode a count, distinct instance IDs,
+      the tiers it hits, and an E0 **metric signature** (mean steps / steps-to-first-edit
+      / output-tokens / tool-call-rounds; made_edit/degenerate-loop/dropped-output/
+      timed-out rates; common errored tools); per tier pass-rate + headroom + a `movable`
+      flag. `parse_episode_jsonl` + `classify_failure` + `instance_tier` reused verbatim.
+      `ranked_cells` order by `count × headroom × movable` (T3/T4 `movable:false` ⇒ zeroed).
+      **No Jaeger dependency.** Verified live over the 19-row swebench corpus.
+- [x] **18.2 Recommendation surface (Claude Code / Opus 4.8 proposer)** — **DONE**
+      (2026-06-25). Proposer spec at `scripts/recommender_proposer_prompt.md`; exercised
+      as 3 Opus-4.8 Claude Code agents over the baseline digest → ranked recommendations,
+      each tying a mode to evidence (instance IDs + metric deltas) + a proposed lever.
+      Schema-expressible levers materialise as runnable `harness_configs/*.json` (e.g. the
+      emitted `proposed-greedy-toolprotocol.json`); code-requiring fixes (edit-matcher,
+      repair-proxy) emit flagged `needs-implementation` notes with a `target_seam`. The
+      `recommend --validate` gate (`validate_proposal`/`validate_proposed_config`) rejects
+      a malformed/non-schema config before it can be A/B'd; a worked output is committed at
+      `scripts/recommender_sample_proposal.json`. Original spec retained below:
+      feed the
       Layer-1 digest to a **Claude Code agent on Opus 4.8**, which emits the **ranked**
       report; each item ties a failure mode (shared taxonomy) to **evidence (instance
       IDs + metric deltas)** and a **proposed lever**. **A lever expressible in the
@@ -528,29 +542,35 @@ build/validation decisions were **user-confirmed 2026-06-24**.
       with the item-16/19 "T3/T4 is a capability wall" finding. The agent's emitted
       configs are **schema-validated** before they count (reuse the `apply_levers` /
       config-load path) so a malformed LLM output is rejected, not silently A/B'd.
-- [ ] **18.3 Close the loop (the decisive validation)** — take the top emitted
-      *runnable* config(s), run via `harness_eval.py run --repeats K` (K≥3, per the
-      item-16 methodology — single runs can't adopt on this nondeterministic stack), and
-      record via `report` whether each moved a tier/failure-mode vs baseline. Each
-      proposal stays **[tool-proposed]** until this local A/B closes it.
-- [ ] **18.0 (validation prereq) Known-answer backtest — RECALL *and* PRECISION.**
-      Build a **labelled ground-truth set** from the pre-fix corpus (`baseline-L0-*`,
-      `nothink-*`): each known item-16 defect tagged to its instance(s) —
-      dropped-output/thinking-stop on 12481/11400/19007, edit gutter/whitespace on
-      15345/13043, the 19007 364-round loop. Run 18.1 (digest) → 18.2 (Opus-4.8
-      proposer) over that corpus and require: **(a)** it surfaces those true modes on
-      their instances (**recall**), **AND (b)** it does not over-flag — spurious
-      recommendations are scored against the taxonomy (**precision**), so a recommender
-      that flags everything **fails**. Because the proposer is an LLM, score **several
-      proposer samples** and require the bar on the **majority** (report the spread).
-      This certifies the *recommender itself* before any novel proposal is trusted.
-- [ ] **`make check` (ruff + mypy + pytest) green** for the **Layer-1** `recommend`
-      digest (the deterministic part): selftests cover the ingestion (against a fixture
-      episode jsonl), the digest aggregation, and the config **schema-validation** of a
-      proposer-emitted config (incl. the `needs-implementation` split). The **Opus-4.8
-      proposer (Layer 2) is validated by the 18.0 backtest, not unit tests** — it is
-      non-deterministic, so its quality gate is recall/precision over several samples,
-      not a fixed assertion.
+- [ ] **18.3 Close the loop (the decisive validation)** — **PLUMBING READY, local A/B
+      PENDING (needs `make mlx-up`).** The top emitted runnable config is materialised and
+      load/schema-validated (`scripts/harness_configs/proposed-greedy-toolprotocol.json`,
+      hash `8cad8a43df03`), so the run is one command:
+      `harness_eval.py run --config proposed-greedy-toolprotocol --repeats 3` → `report`.
+      This is the **only** item-18 step that re-runs the *local* Gemma/MLX stack (hours at
+      8–12 tok/s), so it is left for an explicit serve-time run. Each proposal stays
+      **[tool-proposed]** until this local A/B closes it. (NB: the proposer itself flagged
+      this candidate as likely a tripwire-only effect on the T3/T4 capability wall —
+      consistent with item-16's sweep — so a *null* result here would still be a valid
+      closed outcome.)
+- [x] **18.0 (validation prereq) Known-answer backtest — RECALL *and* PRECISION.** —
+      **DONE → PASS (2026-06-25).** Ground truth `RECOMMENDER_GROUND_TRUTH` tags each known
+      item-16 defect to its instance(s): dropped-output/thinking-stop → `no-edit` on
+      12481/11400/19007, edit gutter/whitespace → `edit-mismatch` on 15345/13043, the
+      19007 364-round loop → `degenerate-loop`. `score_backtest` scores the proposer's
+      (mode, instance) claims for recall + precision; over **3 Opus-4.8 samples** on the
+      baseline pre-fix digest, **all 3 scored recall = 1.0, precision = 1.0** (majority
+      bar cleared, zero over-flagging). Run via
+      `harness_eval.py recommend --backtest <sample>.json …`. Recommender certified.
+- [x] **`make check` (ruff + mypy + pytest) green** for the **Layer-1** `recommend`
+      digest — **DONE.** `harness_eval.py` stays ruff+mypy clean; selftest adds 11 item-18
+      checks covering the digest aggregation (synthetic 2-suite ledger), config
+      **schema-validation** incl. the `needs-implementation` split + the null-tolerance,
+      the whole-proposal gate, and the backtest scorer (recall/precision). The **Opus-4.8
+      proposer (Layer 2) is validated by the 18.0 backtest, not unit tests** — its quality
+      gate is recall/precision over several samples, not a fixed assertion. *(Note:
+      pre-existing ruff/mypy red in item-21 files `codegen_probe.py`/`codemode_*.py` is
+      unrelated to item 18 and untouched.)*
 
 ### Measurement plan (item 18)
 
@@ -573,15 +593,18 @@ build/validation decisions were **user-confirmed 2026-06-24**.
 
 ### Documentation (item 18)
 
-- [ ] **Update** `docs/opencode-local.md` (master doc) — record item 18 as the
-      two-layer automated trace-review recommender (deterministic `harness_eval.py
-      recommend` digest → Claude Code / Opus-4.8 proposer), its input corpus (episode
-      jsonl/ledger, NOT Jaeger), and its config-emitting output.
-- [ ] **Update** `docs/tiered-harness.md` — note the recommender consumes
-      `tier-report.jsonl` + the per-episode `opencode.jsonl` and emits item-17 configs.
-- [ ] **Update** `docs/jaeger-tracing.md` — clarify Jaeger is a *live human debugging*
-      aid; the recommender uses the durable jsonl corpus instead.
-- [ ] **Update** `CHANGELOG.md` only when item 18 reaches a closed outcome.
+- [x] **Update** `docs/opencode-local.md` (master doc) — **DONE.** New *Improvement-
+      recommender (TODO item 18)* section: the two-layer design, the durable jsonl input
+      corpus (NOT Jaeger), the two gates (schema-validate + backtest), the 3/3
+      recall=precision=1.0 validation result, and the commands.
+- [x] **Update** `docs/tiered-harness.md` — **DONE.** Added *The recommender consumes this
+      report* + the `recommend` command; documents reuse of `classify_failure`/
+      `instance_tier` and the `movable`-zeroed T3/T4 priority hint.
+- [x] **Update** `docs/jaeger-tracing.md` — **DONE.** Added a callout that Jaeger is a
+      live human-debugging aid and the recommender uses the durable jsonl corpus instead.
+- [ ] **Update** `CHANGELOG.md` only when item 18 reaches a closed outcome — **PENDING
+      18.3** (the local A/B). Layer 1 + the proposer (18.0 certified) are shipped; the
+      CHANGELOG entry lands when the decisive A/B closes the first proposal.
 
 ### 19. Structured prompt-optimisation (GEPA)  ← deep-research item (was drafted as "14")
 

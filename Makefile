@@ -5,6 +5,7 @@
         mlx-pull mlx-up mlx-down mlx-status mlx-serve mlx-opencode-config \
         mlx-jaeger-up mlx-jaeger-down mlx-bench mlx-bench-summary \
         harness-eval harness-eval-prepare harness-eval-summary harness-eval-online \
+        harness-recommend \
         harness-micro harness-micro-selftest harness-micro-summary
 
 # --- quality gate (mirrors the originating repo's tooling) ---
@@ -86,6 +87,13 @@ harness-eval-online:
 
 harness-eval-summary:
 	uv run python scripts/harness_eval.py summary
+
+# Item 18 Layer-1 evidence digest over the on-disk episode/ledger corpus (offline,
+# no model / no mlx-up). Override the scope with RECOMMEND_ARGS, e.g.
+#   make harness-recommend RECOMMEND_ARGS="--config baseline --suite swebench"
+#   make harness-recommend RECOMMEND_ARGS="--validate scripts/recommender_sample_proposal.json"
+harness-recommend:
+	uv run python scripts/harness_eval.py recommend $(RECOMMEND_ARGS)
 
 # --- signal-producing micro-test harness (tool-call fidelity) ---
 #   make harness-micro CONFIG=micro-baseline      # score one lever config

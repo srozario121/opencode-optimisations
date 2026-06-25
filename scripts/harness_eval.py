@@ -67,6 +67,7 @@ Exit codes: 0 ok · 2 usage/config (no subset, endpoint down, missing cache) ·
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
 import json
 import os
@@ -1627,6 +1628,328 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# item 18 — improvement-recommender (two-layer split)
+#
+# Layer 1 (HERE, deterministic + unit-tested): a `recommend` subcommand that
+# ingests the on-disk episode/ledger corpus and aggregates it into a structured
+# EVIDENCE DIGEST (per failure_category × tier: instance IDs, metric signatures,
+# degenerate-loop signal, tier headroom). It does NOT rank or invent levers — it
+# produces the grounded evidence the Layer-2 proposer reasons over. It also
+# carries the two GATES that keep the LLM proposer honest: a config SCHEMA
+# VALIDATOR (runnable lever vs. needs-implementation) and a known-answer BACKTEST
+# scorer (recall/precision vs. the labelled item-16 ground truth, item 18.0).
+#
+# Layer 2 (a Claude Code agent on Opus 4.8 — NOT here, validated by the backtest
+# not unit tests): consumes this digest + the prior-work docs and emits the
+# ranked recommendations. See docs/opencode-local.md + the proposer prompt
+# (scripts/recommender_proposer_prompt.md).
+# --------------------------------------------------------------------------- #
+
+# Top-level keys a proposer-emitted config may use — exactly the existing lever
+# schema (`load_config`/`apply_levers`). A recommendation whose fix needs any
+# other key (i.e. NEW CODE — a tool shadow, a proxy change) is NOT a runnable
+# config; it must be surfaced as a `needs-implementation` note instead.
+RECOMMEND_ALLOWED_KEYS: set[str] = {
+    "name", "description", "opencode_config", "env", "sampling",
+    "system_prompt", "external_provider", "model_ref", "timeout",
+}
+
+# 18.0 ground truth: the known item-16 defects, each tagged to the instance(s)
+# that exhibit it (modes are members of FAILURE_CATEGORIES). dropped-output /
+# thinking-stop is the `no-edit` mode (the turn produced no patch); the edit
+# gutter/whitespace failures are `edit-mismatch`; the 19007 364-round loop is
+# `degenerate-loop`. This certifies the recommender itself before any novel
+# proposal is trusted — the proposer must surface these on their instances
+# (recall) WITHOUT over-flagging (precision).
+RECOMMENDER_GROUND_TRUTH: dict[str, list[str]] = {
+    "no-edit": ["sympy__sympy-12481", "sympy__sympy-11400", "sympy__sympy-19007"],
+    "edit-mismatch": ["sympy__sympy-15345", "sympy__sympy-13043"],
+    "degenerate-loop": ["sympy__sympy-19007"],
+}
+
+# Tiers with a movable signal (synthetic micro rungs). T3/T4 (real SWE-bench
+# fixes) are a stable 0/8 capability wall per item-16/19 — reported but not a
+# climb target, so the digest's priority hint zeroes them out.
+MOVABLE_TIERS: set[int] = {1, 2}
+
+
+def _instance_id(inst: dict) -> str:
+    """Instance identifier across suites (SWE-bench: instance_id; micro: id)."""
+    return str(inst.get("instance_id") or inst.get("id") or "?")
+
+
+def _metric_signature(metric_dicts: list[dict]) -> dict:
+    """Aggregate the E0 metric blocks of a set of failing episodes into a compact
+    signature the proposer can read (means for counts, rates for booleans)."""
+    n = len(metric_dicts)
+    if not n:
+        return {}
+
+    def mean(key: str) -> float | None:
+        vals = [m[key] for m in metric_dicts
+                if isinstance(m.get(key), (int, float)) and not isinstance(m.get(key), bool)]
+        return round(sum(vals) / len(vals), 2) if vals else None
+
+    def rate(key: str) -> float | None:
+        vals = [bool(m[key]) for m in metric_dicts if m.get(key) is not None]
+        return round(sum(vals) / len(vals), 3) if vals else None
+
+    errored: collections.Counter[str] = collections.Counter()
+    for m in metric_dicts:
+        for tname in (m.get("errored_tools") or []):
+            errored[tname] += 1
+    return {
+        "n": n,
+        "mean_steps": mean("steps"),
+        "mean_steps_to_first_edit": mean("steps_to_first_edit"),
+        "mean_output_tokens": mean("output_tokens"),
+        "mean_tool_call_rounds": mean("tool_call_rounds"),
+        "made_edit_rate": rate("made_edit"),
+        "degenerate_loop_rate": rate("degenerate_loop"),
+        "dropped_output_rate": rate("dropped_output"),
+        "timed_out_rate": rate("timed_out"),
+        "common_errored_tools": dict(errored.most_common(5)),
+    }
+
+
+def _digest_tier_stats(rows: list[dict]) -> dict[int, dict]:
+    """Per global-tier pass/total/headroom over the selected rows. A tier 'pass'
+    is ``classify_failure == 'ok'`` (uniform across suites, like tier_breakdown)."""
+    agg: dict[int, dict] = {}
+    for r in rows:
+        suite = r.get("suite", "swebench")
+        for inst in r.get("instances", []):
+            t = instance_tier(inst, suite)
+            cat = inst.get("failure_category") or classify_failure(inst)
+            cell = agg.setdefault(t, {"pass": 0, "total": 0})
+            cell["total"] += 1
+            if cat == "ok":
+                cell["pass"] += 1
+    out: dict[int, dict] = {}
+    for t, cell in agg.items():
+        rate = cell["pass"] / cell["total"] if cell["total"] else None
+        out[t] = {
+            "label": GLOBAL_TIERS.get(t, "?"),
+            "pass": cell["pass"], "total": cell["total"],
+            "pass_rate": round(rate, 3) if rate is not None else None,
+            "headroom": round(1.0 - rate, 3) if rate is not None else None,
+            "movable": t in MOVABLE_TIERS,
+        }
+    return out
+
+
+def build_evidence_digest(rows: list[dict], config: str | None = None,
+                          suite: str | None = None) -> dict:
+    """Layer-1 deterministic evidence digest over the on-disk ledger corpus (18.1).
+
+    Aggregates the selected ledger rows by ``failure_category × tier``: per mode a
+    count, the distinct instance IDs, the tiers it hits, an E0 metric signature,
+    and which configs exhibited it; per tier the pass-rate + headroom + movability.
+    ``ranked_cells`` orders (mode, tier) cells by a deterministic priority HINT —
+    ``count × headroom × movable`` — which prioritises the only tiers with a
+    movable signal (T1/T2), consistent with item-16/19. This is evidence, not a
+    lever proposal: the Opus-4.8 proposer does the ranking + invention.
+    """
+    rows = [r for r in rows
+            if (suite is None or r.get("suite", "swebench") == suite)
+            and (config is None or r.get("config_name") == config)]
+    tier_stats = _digest_tier_stats(rows)
+    modes: dict[str, dict] = {}
+    cells: dict[tuple[str, int], dict] = {}
+    for r in rows:
+        suite_name = r.get("suite", "swebench")
+        cname = r.get("config_name", "?")
+        for inst in r.get("instances", []):
+            cat = inst.get("failure_category") or classify_failure(inst)
+            if cat == "ok":
+                continue
+            t = instance_tier(inst, suite_name)
+            iid = _instance_id(inst)
+            m = modes.setdefault(cat, {"count": 0, "instances": set(),
+                                       "tiers": {}, "configs": set(), "_acc": []})
+            m["count"] += 1
+            m["instances"].add(iid)
+            m["tiers"][t] = m["tiers"].get(t, 0) + 1
+            m["configs"].add(cname)
+            m["_acc"].append(inst.get("metrics") or {})
+            cell = cells.setdefault((cat, t), {"count": 0, "instances": set()})
+            cell["count"] += 1
+            cell["instances"].add(iid)
+    failure_modes: dict[str, dict] = {}
+    for cat, m in modes.items():
+        failure_modes[cat] = {
+            "count": m["count"],
+            "instances": sorted(m["instances"]),
+            "tiers": {str(k): v for k, v in sorted(m["tiers"].items())},
+            "configs_seen": sorted(m["configs"]),
+            "metric_signature": _metric_signature(m["_acc"]),
+        }
+    ranked: list[dict] = []
+    for (cat, t), cell in cells.items():
+        ts = tier_stats.get(t, {})
+        headroom = ts.get("headroom")
+        movable = bool(ts.get("movable"))
+        signal = cell["count"] * (headroom or 0.0) * (1.0 if movable else 0.0)
+        ranked.append({
+            "failure_mode": cat, "tier": t, "count": cell["count"],
+            "headroom": headroom, "movable": movable,
+            "priority_signal": round(signal, 3),
+            "instances": sorted(cell["instances"]),
+        })
+    ranked.sort(key=lambda c: (-c["priority_signal"], -c["count"], c["failure_mode"]))
+    return {
+        "generated_from": {
+            "ledger_rows": len(rows),
+            "configs": sorted({r.get("config_name", "?") for r in rows}),
+            "suites": sorted({r.get("suite", "swebench") for r in rows}),
+        },
+        "tiers": {str(t): tier_stats[t] for t in sorted(tier_stats)},
+        "failure_modes": dict(sorted(failure_modes.items(),
+                                     key=lambda kv: -kv[1]["count"])),
+        "ranked_cells": ranked,
+        "taxonomy": FAILURE_CATEGORIES,
+        "notes": ("Layer-1 deterministic evidence digest (item 18.1). "
+                  "Layer-2 (Opus 4.8) ranks + proposes from this; every proposal "
+                  "stays [tool-proposed] until an 18.3 K>=3 A/B closes it."),
+    }
+
+
+def validate_proposed_config(cfg: object) -> list[str]:
+    """Schema-validate ONE proposer-emitted lever config against the existing
+    config schema. Returns a list of errors ([] == a valid runnable config). A key
+    outside RECOMMEND_ALLOWED_KEYS means the fix needs new code — reject it as a
+    runnable config (it belongs in a `needs-implementation` note instead)."""
+    if not isinstance(cfg, dict):
+        return ["config is not a JSON object"]
+    errors: list[str] = []
+    for k in sorted(set(cfg) - RECOMMEND_ALLOWED_KEYS):
+        errors.append(f"unknown key {k!r}: not expressible in the lever schema "
+                      f"(needs-implementation, not a runnable config)")
+    for key in ("opencode_config", "env", "sampling"):
+        if key in cfg and not isinstance(cfg[key], dict):
+            errors.append(f"{key} must be an object")
+    # The optional scalar levers tolerate an explicit null (== "unset"): a common
+    # way for the LLM proposer to spell out a field it isn't using. null can never
+    # smuggle in a code-requiring lever, so it is treated as absent, not an error.
+    if isinstance(cfg.get("system_prompt"), (str, type(None))) is False:
+        errors.append("system_prompt must be a string or null")
+    if cfg.get("external_provider") is not None \
+            and not isinstance(cfg["external_provider"], bool):
+        errors.append("external_provider must be a boolean or null")
+    if cfg.get("model_ref") is not None and not isinstance(cfg["model_ref"], str):
+        errors.append("model_ref must be a string or null")
+    if cfg.get("timeout") is not None and (isinstance(cfg["timeout"], bool)
+                                           or not isinstance(cfg["timeout"], (int, float))):
+        errors.append("timeout must be a number or null")
+    return errors
+
+
+def validate_proposal(proposal: object) -> dict:
+    """Validate a whole proposer output (the 18.2 gate). Each recommendation is
+    either a `runnable-config` (its `config` must pass the schema validator) or a
+    `needs-implementation` note (must name a `target_seam`). A malformed proposal
+    is rejected, not silently A/B'd."""
+    if not isinstance(proposal, dict) or "recommendations" not in proposal:
+        return {"ok": False, "recommendations": [],
+                "error": "proposal must be a JSON object with a 'recommendations' list"}
+    out: dict = {"ok": True, "recommendations": []}
+    for i, rec in enumerate(proposal.get("recommendations") or []):
+        rec = rec if isinstance(rec, dict) else {}
+        kind = rec.get("kind")
+        verdict: dict = {"index": i, "failure_mode": rec.get("failure_mode"),
+                         "kind": kind, "errors": [], "runnable": False}
+        if kind == "runnable-config":
+            errs = validate_proposed_config(rec.get("config"))
+            verdict["errors"] = errs
+            verdict["runnable"] = not errs
+        elif kind == "needs-implementation":
+            ni = rec.get("needs_implementation") or {}
+            if not (isinstance(ni, dict) and ni.get("target_seam")):
+                verdict["errors"].append(
+                    "needs-implementation requires a needs_implementation.target_seam")
+        else:
+            verdict["errors"].append(
+                f"unknown recommendation kind {kind!r} "
+                "(expected 'runnable-config' or 'needs-implementation')")
+        if verdict["errors"]:
+            out["ok"] = False
+        out["recommendations"].append(verdict)
+    return out
+
+
+def score_backtest(proposal: dict, ground_truth: dict | None = None) -> dict:
+    """18.0 known-answer scorer: recall + precision of a proposer output vs the
+    labelled item-16 ground truth. Compares the (failure_mode, instance) pairs the
+    proposer claims (from each recommendation's ``evidence.instances``) to the true
+    pairs. Precision is scored over the defect-mode vocabulary only, so flagging
+    everything within those modes drives precision down (over-flagging fails)."""
+    gt = ground_truth if ground_truth is not None else RECOMMENDER_GROUND_TRUTH
+    gt_modes = set(gt)
+    true_pairs = {(mode, iid) for mode, insts in gt.items() for iid in insts}
+    flagged: set[tuple[str, str]] = set()
+    for rec in (proposal.get("recommendations") or []):
+        if not isinstance(rec, dict):
+            continue
+        mode = rec.get("failure_mode")
+        ev = rec.get("evidence") or {}
+        for iid in (ev.get("instances") or []):
+            flagged.add((str(mode), str(iid)))
+    scored = {p for p in flagged if p[0] in gt_modes}
+    tp = len(scored & true_pairs)
+    recall = tp / len(true_pairs) if true_pairs else None
+    precision = tp / len(scored) if scored else None
+    return {
+        "true_positives": tp,
+        "total_true": len(true_pairs),
+        "total_flagged_in_taxonomy": len(scored),
+        "recall": round(recall, 3) if recall is not None else None,
+        "precision": round(precision, 3) if precision is not None else None,
+        "missed": sorted(true_pairs - scored),
+        "spurious": sorted(scored - true_pairs),
+    }
+
+
+def cmd_recommend(args: argparse.Namespace) -> int:
+    """item 18: Layer-1 evidence digest + the two proposer-output gates."""
+    if args.validate:
+        with open(args.validate) as f:
+            proposal = json.load(f)
+        res = validate_proposal(proposal)
+        print(json.dumps(res, indent=2))
+        n_run = sum(1 for r in res["recommendations"] if r.get("runnable"))
+        print(f"\nvalidate: {'OK' if res['ok'] else 'REJECTED'} "
+              f"({n_run} runnable config(s))", file=sys.stderr)
+        return 0 if res["ok"] else 1
+    if args.backtest:
+        samples = []
+        for path in args.backtest:
+            with open(path) as f:
+                samples.append((path, score_backtest(json.load(f))))
+        passes = 0
+        for path, sc in samples:
+            ok = (sc["recall"] is not None and sc["recall"] >= args.recall_bar
+                  and sc["precision"] is not None and sc["precision"] >= args.precision_bar)
+            passes += ok
+            print(f"  [{'PASS' if ok else 'FAIL'}] {os.path.basename(path)}: "
+                  f"recall={sc['recall']} precision={sc['precision']} "
+                  f"missed={len(sc['missed'])} spurious={len(sc['spurious'])}")
+        majority = passes * 2 > len(samples)
+        print(f"\nbacktest: {passes}/{len(samples)} samples clear the bar "
+              f"(recall>={args.recall_bar}, precision>={args.precision_bar}) -> "
+              f"{'PASS (majority)' if majority else 'FAIL'}", file=sys.stderr)
+        return 0 if majority else 1
+    digest = build_evidence_digest(load_ledger(), config=args.config, suite=args.suite)
+    print(json.dumps(digest, indent=2))
+    if not args.stdout_only:
+        out_path = os.path.join(HARNESS_DIR, "recommend-digest.json")
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        with open(out_path, "w") as f:
+            json.dump(digest, f, indent=2)
+        print(f"\nEvidence digest -> {out_path}", file=sys.stderr)
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     subset = load_subset()
     if not subset:
@@ -2034,6 +2357,94 @@ def cmd_selftest(args: argparse.Namespace) -> int:
           ext_prov.get("opencode", {}).get("models", {}).get("big-pickle", {})
           .get("options", {}).get("temperature") == 0.0)
 
+    # --- item 18: recommender Layer-1 (digest + the two proposer-output gates) ---
+    # A two-row synthetic ledger: a SWE-bench baseline (a no-edit T3 + a degenerate
+    # T4) and a micro run (an edit-mismatch T2 + an ok T1), exercising both suites,
+    # the failure_category × tier aggregation, and the T1/T2-movable priority hint.
+    digest_rows = [
+        {"suite": "swebench", "config_name": "baseline", "instances": [
+            {"instance_id": "sympy__sympy-12481", "passed": False, "reason": "no-edit",
+             "tier": 3, "pass_to_pass_total": 0, "pass_to_pass_passed": 0,
+             "metrics": {"made_edit": False, "steps": 5, "dropped_output": True,
+                         "degenerate_loop": False, "output_tokens": 200}},
+            {"instance_id": "sympy__sympy-19007", "passed": False, "reason": "timeout",
+             "tier": 4, "metrics": {"made_edit": False, "steps": 364,
+                                    "degenerate_loop": True, "output_tokens": 9000}},
+        ]},
+        {"suite": "micro", "config_name": "micro-baseline", "instances": [
+            {"id": "edit-1", "status": "partial", "tier": 3, "failure_category":
+             "edit-mismatch", "checks_passed": 1, "checks_total": 2},
+            {"id": "call-1", "status": "ok", "tier": 1, "failure_category": "ok",
+             "checks_passed": 2, "checks_total": 2},
+        ]},
+    ]
+    dg = build_evidence_digest(digest_rows)
+    check("18.1 digest: failure modes aggregated across suites",
+          set(dg["failure_modes"]) == {"no-edit", "degenerate-loop", "edit-mismatch"})
+    check("18.1 digest: no-edit carries its instance id + metric signature",
+          dg["failure_modes"]["no-edit"]["instances"] == ["sympy__sympy-12481"]
+          and dg["failure_modes"]["no-edit"]["metric_signature"]["made_edit_rate"] == 0.0)
+    check("18.1 digest: T1 movable + has headroom, T3 not movable",
+          dg["tiers"]["1"]["movable"] is True
+          and dg["tiers"]["3"]["movable"] is False)
+    # The micro edit-mismatch is T2 (movable, headroom 1.0) so it must outrank the
+    # T3/T4 SWE-bench cells (movable=False ⇒ priority_signal 0) in ranked_cells.
+    check("18.1 digest: movable T2 cell ranks above the capability-wall T3/T4 cells",
+          dg["ranked_cells"][0]["tier"] == 2
+          and dg["ranked_cells"][0]["priority_signal"] > 0
+          and all(c["priority_signal"] == 0 for c in dg["ranked_cells"] if c["tier"] in (3, 4)))
+
+    # 18.2 config schema validation — a clean lever config passes; a code-requiring
+    # key is rejected (it belongs in a needs-implementation note); bad types caught.
+    check("18.2 validate: clean lever config has no errors",
+          validate_proposed_config(
+              {"name": "x", "sampling": {"temperature": 0.0}, "system_prompt": None}) == [])
+    check("18.2 validate: a code-requiring key (tool_shadow) is rejected",
+          any("tool_shadow" in e for e in
+              validate_proposed_config({"name": "x", "tool_shadow": "edit.ts"})))
+    check("18.2 validate: wrong-typed sampling is rejected",
+          validate_proposed_config({"name": "x", "sampling": "hot"}) != [])
+    check("18.2 validate: explicit null on optional scalar keys is tolerated (== unset)",
+          validate_proposed_config({"name": "x", "sampling": {"temperature": 0.0},
+                                    "external_provider": None, "model_ref": None,
+                                    "timeout": None}) == [])
+
+    # 18.2 whole-proposal gate — a runnable-config validates; a needs-implementation
+    # note without a target seam fails; an unknown kind fails.
+    proposal_ok = {"recommendations": [
+        {"failure_mode": "no-edit", "kind": "runnable-config",
+         "evidence": {"instances": ["sympy__sympy-12481"]},
+         "config": {"name": "low-temp", "sampling": {"temperature": 0.0}}},
+        {"failure_mode": "edit-mismatch", "kind": "needs-implementation",
+         "needs_implementation": {"target_seam": ".opencode/tools/edit.ts",
+                                  "why": "edit matcher is whitespace-sensitive"}},
+    ]}
+    vp = validate_proposal(proposal_ok)
+    check("18.2 proposal: valid runnable-config + needs-implementation accepted",
+          vp["ok"] is True and vp["recommendations"][0]["runnable"] is True
+          and vp["recommendations"][1]["runnable"] is False)
+    bad = validate_proposal({"recommendations": [
+        {"kind": "needs-implementation", "needs_implementation": {}},
+        {"kind": "frobnicate"}]})
+    check("18.2 proposal: missing target_seam + unknown kind rejected",
+          bad["ok"] is False)
+
+    # 18.0 backtest scorer — a proposal that names the true (mode, instance) pairs
+    # scores recall=precision=1.0; an over-flagging proposal loses precision.
+    perfect = {"recommendations": [
+        {"failure_mode": m, "evidence": {"instances": insts}}
+        for m, insts in RECOMMENDER_GROUND_TRUTH.items()]}
+    sc = score_backtest(perfect)
+    check("18.0 backtest: ground-truth-matching proposal scores recall=precision=1.0",
+          sc["recall"] == 1.0 and sc["precision"] == 1.0)
+    overflag = {"recommendations": [
+        {"failure_mode": "no-edit", "evidence": {"instances": [
+            "sympy__sympy-12481", "sympy__sympy-11400", "sympy__sympy-19007",
+            "sympy__sympy-15345", "sympy__sympy-13043"]}}]}
+    sc2 = score_backtest(overflag)
+    check("18.0 backtest: over-flagging a mode drops precision below 1.0",
+          sc2["precision"] is not None and sc2["precision"] < 1.0)
+
     print(f"\nselftest: {'OK' if ok else 'FAILURES'}")
     return 0 if ok else 1
 
@@ -2087,6 +2498,28 @@ def main(argv: list[str] | None = None) -> int:
     rp = sub.add_parser("report", help="render + persist the item-17 tiered "
                                        "validation report (per-tier × failure-mode)")
     rp.set_defaults(func=cmd_report)
+
+    rc = sub.add_parser("recommend",
+                        help="(item 18) Layer-1 evidence digest over the on-disk "
+                             "episode/ledger corpus; --validate/--backtest gate the "
+                             "Opus-4.8 proposer output")
+    rc.add_argument("--config", default=None,
+                    help="restrict the digest to one config_name (e.g. baseline)")
+    rc.add_argument("--suite", default=None, choices=["swebench", "micro"],
+                    help="restrict the digest to one suite")
+    rc.add_argument("--stdout-only", action="store_true",
+                    help="print the digest but do not persist recommend-digest.json")
+    rc.add_argument("--validate", default=None, metavar="PROPOSAL.json",
+                    help="schema-validate a proposer-emitted proposal "
+                         "(runnable-config vs needs-implementation); exit 1 if invalid")
+    rc.add_argument("--backtest", nargs="+", default=None, metavar="PROPOSAL.json",
+                    help="score proposer proposal sample(s) for recall/precision vs "
+                         "the known item-16 ground truth (18.0); majority bar over samples")
+    rc.add_argument("--recall-bar", type=float, default=0.6,
+                    help="min recall for a backtest sample to pass (default 0.6)")
+    rc.add_argument("--precision-bar", type=float, default=0.5,
+                    help="min precision for a backtest sample to pass (default 0.5)")
+    rc.set_defaults(func=cmd_recommend)
 
     st = sub.add_parser("selftest", help="offline sanity checks (no model needed)")
     st.add_argument("--check-sampling", action="store_true",
