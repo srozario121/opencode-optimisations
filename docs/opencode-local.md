@@ -1460,12 +1460,28 @@ silently get something wrong A/B'd:
 **Validation result (2026-06-25).** Over the baseline pre-fix digest, three Opus-4.8
 proposer samples each scored **recall = 1.0, precision = 1.0** (3/3 clear the bar) —
 they rediscovered all three known item-16 defects on their exact instances with zero
-over-flagging, and each correctly split the whitespace edit-matcher fix into a
-`needs-implementation` note rather than a config. The recommender itself is therefore
-**certified**. The decisive **18.3** step (A/B the top emitted config at K≥3 via
-`harness_eval.py run`) re-runs the *local* Gemma stack and is the one piece that needs
-the MLX server up; every proposal stays **[tool-proposed]** until that local A/B
-closes it.
+over-flagging. The recommender itself is therefore **certified**.
+
+A **rerun once item-16's L0–L6 lever sweep was merged in** (its full adopt/reject
+verdicts now in the proposer's prior-work context) is the more telling result, and is
+the committed golden sample (`scripts/recommender_sample_proposal.json`): with the
+cheap schema-expressible levers *already swept and rejected* (L1 anti-repetition, L3/L6
+prompt, L5 `doom_loop`, low-temp — none moved SWE 0→>0), all three samples routed
+**every** defect to a `needs-implementation` note pointing at the genuinely un-tried
+structural seams — repair-proxy **no-text-stop recovery** (`mlx_repair_proxy.py`) for
+the dropped-output `no-edit` mode, a **whitespace-tolerant edit matcher**
+(`.opencode/tools/edit.ts`) for `edit-mismatch`, and a **churn-aware loop guard**
+(explicitly *not* opencode's rejected identical-call `doom_loop`) for the 19007
+`degenerate-loop` — each rationale honestly citing the prior reject verdict. The
+substantive conclusion: **there is no new schema-expressible lever worth A/B-ing; the
+remaining work is structural.**
+
+The decisive **18.3** step (A/B an emitted runnable config at K≥3 via
+`harness_eval.py run`) re-runs the *local* Gemma stack and needs the MLX server up. The
+first-pass run's `proposed-greedy-toolprotocol` config remains the A/B-ready candidate,
+though the L0–L6-aware rerun predicts a **null** result for it (it recombines levers
+item 16 already rejected). Every proposal stays **[tool-proposed]** until that local
+A/B closes it.
 
 ### Commands
 
