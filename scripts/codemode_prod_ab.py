@@ -42,8 +42,8 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import harness_micro as hm  # noqa: E402  (reuse config/episode/transcript machinery)
 import harness_eval as he  # noqa: E402
+import harness_micro as hm  # noqa: E402  (reuse config/episode/transcript machinery)
 
 REPO_ROOT = hm.REPO_ROOT
 LEDGER = os.path.join(REPO_ROOT, "scripts", "codemode-prod-ab.jsonl")
@@ -280,7 +280,7 @@ def cmd_summary(args):
     if not os.path.exists(LEDGER):
         print("no runs yet")
         return 0
-    r = [json.loads(l) for l in open(LEDGER) if l.strip()][-1]
+    r = [json.loads(line) for line in open(LEDGER) if line.strip()][-1]
     print(f"latest: model={r['model']} k={r['k']} tasks={r['tasks']}")
     _report(r["summary"], r["arms"])
     return 0
@@ -301,7 +301,8 @@ def cmd_selftest(args):
         data = json.load(open(os.path.join(cfg_dir, "opencode.json")))
         has_nudge = any(p.endswith("codemode-nudge.md") for p in data.get("instructions", []))
         env_ok = env.get("CODEMODE_EXEC") == CODEMODE_EXEC and env.get("CODEMODE_ROOT") == wd
-        print(f"\n  codemode arm: tool_installed={has_tool} nudge_registered={has_nudge} env_set={env_ok}")
+        print(f"\n  codemode arm: tool_installed={has_tool} "
+              f"nudge_registered={has_nudge} env_set={env_ok}")
         ok = has_tool and has_nudge and env_ok
         # baseline arm must NOT have codemode
         xdg2 = tempfile.mkdtemp(prefix="cmab-selftest2-")
@@ -321,7 +322,8 @@ def cmd_selftest(args):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description="Production A/B: baseline vs codemode opencode (TODO 21.4b)")
+    p = argparse.ArgumentParser(
+        description="Production A/B: baseline vs codemode opencode (TODO 21.4b)")
     sub = p.add_subparsers(dest="cmd", required=True)
     rn = sub.add_parser("run")
     rn.add_argument("--arms", nargs="+", choices=["baseline", "codemode"],

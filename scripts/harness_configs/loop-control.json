@@ -1,0 +1,17 @@
+{
+  "name": "loop-control",
+  "description": "L5 (item 16): native opencode doom_loop loop control. Default permission is doom_loop:\"ask\" (headless effectively lets loops continue \u2192 the 364-round / 600s-timeout spins). This sets permission.doom_loop:\"deny\" so opencode BREAKS a detected infinite tool-call loop (denies the repeated call), and continue_loop_on_deny:true so the agent loop keeps going afterward (the model gets the denial as feedback and can pivot, rather than the episode terminating). The deny only fires when opencode's loop DETECTOR triggers (default *:\"allow\" still covers all normal tool calls), so non-looping episodes are unaffected. Primary metric: stuck-loop count / timeout rate / mean tool-call rounds \u2193 vs baseline. Counterpart control: baseline. Targets the SWE timeout/loop modes (7/24 in baseline SWE K=3); micro has no loops so it is a no-regression check there.",
+  "opencode_config": {
+    "permission": {
+      "doom_loop": "deny"
+    },
+    "agent": {
+      "build": {
+        "continue_loop_on_deny": true
+      }
+    }
+  },
+  "env": {},
+  "sampling": {},
+  "system_prompt": null
+}

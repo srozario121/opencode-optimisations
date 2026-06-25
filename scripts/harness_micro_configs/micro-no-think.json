@@ -1,0 +1,11 @@
+{
+  "name": "micro-no-think",
+  "description": "L6 (item 16) on the micro gradient: identical to micro-baseline EXCEPT the repair proxy is restarted with MLX_PROXY_NO_THINK=1, which injects chat_template_kwargs={enable_thinking:false} into tool requests so the Gemma-4 template does NOT force a thinking phase. The lever lives in the PROXY (separate process), not in this config — this file exists only to give the ledger a distinct config_name for attribution. Run while the NO_THINK proxy is live. Targets the micro T2 'no-edit' drops (model spends the turn reasoning, emits no tool call). Counterpart control: micro-baseline (NO_THINK=0).",
+  "sampling": {},
+  "env": {},
+  "system_prompt": null,
+  "rules": null,
+  "skill": null,
+  "tools_variant": "default",
+  "opencode_config": {}
+}

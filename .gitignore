@@ -1,5 +1,6 @@
 # Python
 .venv/
+.venv
 __pycache__/
 *.py[cod]
 .ruff_cache/
@@ -21,6 +22,7 @@ scripts/_codemode_ab_runs/
 scripts/codegen-probe.jsonl
 scripts/codemode-ab.jsonl
 scripts/codemode-prod-ab.jsonl
+scripts/codemode-niche-ab.jsonl
 
 # macOS
 .DS_Store

@@ -102,18 +102,40 @@ CODEMODE_ENGINE=monty opencode run "..."
 
 ## When to use it
 
-From the production A/B (`docs/sandbox-codeexec-research.md`, Empirical addendum 5):
+From the production + niche A/Bs (`docs/sandbox-codeexec-research.md` addenda 5–6;
+the niche run is item 21.4c, `scripts/codemode_niche_ab.py`):
 
 - ✅ **Worth it** for round-trip-heavy multi-file gather / scan / count / aggregate that
   the model would otherwise do as N separate read/grep calls (measured −50% calls,
   −20–56% wall-clock).
-- ➖ **Marginal** when the model already self-batches via `bash` (e.g. one `wc -l`) — on
-  this stack `bash` is a competing, simpler "code mode" the model often picks unprompted.
+- ✅ **Its real niche is RELIABILITY + LATENCY on bash-hostile tasks** — multi-step
+  parsing, conditional logic on file contents, cross-file reasoning, where there is no
+  clean shell one-liner. There the baseline falls into grep/read churn and **times out
+  ~40%** of the time at the 600s cap; `codemode` single-shots it (**termination 1.0 vs
+  0.8, ~1.9–2.9× faster, fewer round-trips**). The model picks it ~75% of the time on
+  such tasks.
+- ⚠️ **It does NOT improve correctness on the frozen weak model.** In 21.4c overall
+  correctness *regressed* (0.55 vs 0.80): `codemode` lets Gemma-4-E4B terminate fast
+  with a **buggy** program (e.g. `name.isalpha()` silently dropping underscore constant
+  names) where the baseline's slower grep-churn grinds to the right answer. The
+  bottleneck shifts from round-trip churn to **code quality** — the same item-16
+  capability wall. So `codemode` is adopted as an **available** tool, **not** forced via
+  a default-on nudge.
+- ➖ **Marginal / not invoked** when the task is a single tool call (e.g. one `grep`/`wc
+  -l`) — the model won't reach for `codemode` and the arms tie. On this stack `bash` is a
+  competing simpler "code mode", but note it only competes where a one-liner exists; on
+  parse-heavy tasks the model **does not reach for `bash` at all**.
 - ❌ **No help** on the degenerate-loop failure (the model churning without terminating);
   `codemode` only helps when the model is *productively* making tool calls.
 
-It never lost in testing, so keeping it available is low-risk — but don't expect it to
-move the headline pass-rate on its own.
+It never *times out* and is selected when useful, so keeping it available is low-risk —
+but don't expect it to move the headline pass-rate on its own, and don't force it.
+
+> **Nudge caveat (measured in 21.4c):** the sandbox is **builtins-only** — the model's
+> first instinct on a parse task is `import re`, which dies with `ImportError:
+> __import__ not found`. If you steer the model toward `codemode` for parsing, the nudge
+> **must** say: *no `import`; use only str methods + the host-tools.* Without it the
+> first call is wasted (the model recovers on the retry, but slower).
 
 ## Testing
 
@@ -129,6 +151,7 @@ echo "result = sum(len(read_file(p).splitlines()) for p in glob('scripts/*.py'))
 .venv/bin/python scripts/codegen_probe.py selftest        # code-gen pass@1 probe
 .venv/bin/python scripts/codemode_ab.py selftest          # flat-ReAct vs code-mode (mock tools)
 .venv/bin/python scripts/codemode_prod_ab.py selftest     # production A/B (real opencode)
+.venv/bin/python scripts/codemode_niche_ab.py selftest    # niche A/B (bash-hostile tasks, 21.4c)
 ```
 
 ## Security note

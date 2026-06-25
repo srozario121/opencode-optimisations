@@ -1,0 +1,14 @@
+{
+  "name": "micro-rep-penalty",
+  "description": "L1 (item 16) on the micro gradient: identical to micro-baseline EXCEPT sampling adds repetition_penalty=1.1 + repetition_context_size=20 (mlx-lm 0.31.3 reads both from the request body; wire path verified 2026-06-24). Anti-repetition; targets degenerate decode loops. Counterpart control: micro-baseline. Measures whether anti-repetition holds or hurts the near-ceiling micro pass-rate (T1 4/4, T2 ~4-6/6).",
+  "sampling": {
+    "repetition_penalty": 1.1,
+    "repetition_context_size": 20
+  },
+  "env": {},
+  "system_prompt": null,
+  "rules": null,
+  "skill": null,
+  "tools_variant": "default",
+  "opencode_config": {}
+}

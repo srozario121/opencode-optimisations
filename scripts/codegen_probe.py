@@ -67,7 +67,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS_DIR = os.path.join(REPO_ROOT, "scripts")
@@ -87,7 +88,11 @@ FIXTURE = {
         "config.json": '{"debug": true, "plugins": ["otel", "repair", "grep"]}',
     },
     "dirs": {"src": ["src/a.py", "src/b.py", "src/c.py"]},
-    "users": {1: {"id": 1, "balance": 50}, 2: {"id": 2, "balance": 120}, 3: {"id": 3, "balance": 80}},
+    "users": {
+        1: {"id": 1, "balance": 50},
+        2: {"id": 2, "balance": 120},
+        3: {"id": 3, "balance": 80},
+    },
     "orders": {
         1: [{"amount": 20}],
         2: [{"amount": 5}, {"amount": 30}],
@@ -98,7 +103,10 @@ FIXTURE = {
     # list_user_ids() yields 7 and 99 which have NO user record -> get_user raises;
     # the hard "error handling" task must skip them.
     "user_ids": [1, 2, 3, 7, 99],
-    "products": {100: {"id": 100, "price": 10, "stock": 3}, 101: {"id": 101, "price": 50, "stock": 0}},
+    "products": {
+        100: {"id": 100, "price": 10, "stock": 3},
+        101: {"id": 101, "price": 50, "stock": 0},
+    },
 }
 
 
@@ -189,7 +197,9 @@ TOOL_SIGNATURES = {
     "list_user_ids": "list_user_ids() -> list[int]  # all candidate user ids (some may not exist)",
     "file_size": "file_size(path: str) -> int  # size of a file in characters",
     "grep_count": "grep_count(pattern: str, text: str) -> int  # count of substring occurrences",
-    "get_product": "get_product(product_id: int) -> dict  # {'id','price','stock'}; raises if missing",
+    "get_product": (
+        "get_product(product_id: int) -> dict  # {'id','price','stock'}; raises if missing"
+    ),
     "to_upper": "to_upper(s: str) -> str  # uppercase a string",
     "sum_list": "sum_list(nums: list[int]) -> int  # sum a list of numbers",
     "now": "now() -> int  # current unix timestamp",
@@ -211,7 +221,7 @@ class Task:
     required_tools: tuple     # must appear in the runtime call log
     min_calls: int            # minimum runtime tool calls for a legit solution
     needs_control: bool       # must use a loop OR conditional (or >=3 calls)
-    reference: object         # callable() -> expected result, computed from FIXTURE
+    reference: Callable[[], object]  # () -> expected result, computed from FIXTURE
     tier: str = "base"        # "base" (simple/moderate) | "hard" (21.2b stress tier)
 
 
@@ -399,7 +409,8 @@ SYSTEM_PROMPT = (
     "that are ALREADY DEFINED and in scope. Rules:\n"
     "- Output ONLY one Python code block, fenced as ```python ... ```. No prose, no explanation.\n"
     "- Do NOT redefine, import, or mock the helper functions; just call them.\n"
-    "- Use only plain Python and the listed helpers (loops, conditionals, comprehensions are fine).\n"
+    "- Use only plain Python and the listed helpers "
+    "(loops, conditionals, comprehensions are fine).\n"
     "- Assign your final answer to a variable named `result`.\n"
 )
 
@@ -424,7 +435,7 @@ def extract_code(text: str):
     in_block = False
     fence_lang = None
     blocks = []
-    cur = []
+    cur: list[str] = []
     for ln in lines:
         stripped = ln.strip()
         if stripped.startswith("```"):
@@ -450,7 +461,9 @@ def extract_code(text: str):
 
 def static_analysis(code: str):
     """Return dict: parse_ok, has_loop, has_cond, called_names (static)."""
-    out = {"parse_ok": False, "has_loop": False, "has_cond": False, "called": set()}
+    called: set[str] = set()
+    out: dict[str, object] = {"parse_ok": False, "has_loop": False,
+                              "has_cond": False, "called": called}
     try:
         tree = ast.parse(code)
     except SyntaxError:
@@ -463,7 +476,7 @@ def static_analysis(code: str):
         if isinstance(node, (ast.If, ast.IfExp)):
             out["has_cond"] = True
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            out["called"].add(node.func.id)
+            called.add(node.func.id)
     return out
 
 
@@ -544,7 +557,9 @@ def run_monty(code: str, tools: dict, timeout_s: float = 5.0):
     except Exception as e:  # noqa: BLE001
         return (None, f"{type(e).__name__}: {e}")
     try:
-        out = m.run(external_functions=dict(tools), limits=limits)
+        # limits is a plain dict (works at runtime); Monty is an optional alpha dep
+        # with a shifting typed API, so the precise ResourceLimits type isn't enforced.
+        out = m.run(external_functions=dict(tools), limits=limits)  # type: ignore[arg-type]
         return (out, None)
     except Exception as e:  # noqa: BLE001 — runtime/dialect/timeout failures are graded, not raised
         msg = str(e)
@@ -586,7 +601,7 @@ def grade(task: Task, raw_text: str, engine, sample_idx: int) -> Grade:
         g.fail_stage = "parse" if fmt else "format"
         return g
 
-    call_log = []
+    call_log: list[str] = []
     tools = _make_tools(call_log)
     # restrict the namespace to this task's exposed tools only
     exposed = {k: tools[k] for k in task.tools}
@@ -738,7 +753,10 @@ def cmd_run(args) -> int:
         return 2
     target = targets[args.target]
     if target.get("enabled") is False:
-        print(f"target {args.target!r} is disabled / unconfigured — edit {TARGETS_FILE}", file=sys.stderr)
+        print(
+            f"target {args.target!r} is disabled / unconfigured — edit {TARGETS_FILE}",
+            file=sys.stderr,
+        )
         return 2
     transport = TRANSPORTS.get(target.get("transport", "http"))
     if transport is None:
@@ -749,7 +767,10 @@ def cmd_run(args) -> int:
         try:
             import pydantic_monty  # noqa: F401
         except Exception:
-            print("engine 'monty' needs pydantic-monty: `uv pip install pydantic-monty`", file=sys.stderr)
+            print(
+                "engine 'monty' needs pydantic-monty: `uv pip install pydantic-monty`",
+                file=sys.stderr,
+            )
             return 2
 
     if args.tasks:
@@ -765,7 +786,8 @@ def cmd_run(args) -> int:
 
     # Generate ONCE per (task, sample); grade the SAME output through every engine
     # so exec-vs-monty is apples-to-apples (generation is the expensive step).
-    raw_samples = []  # (task, sample_idx, raw_or_None, transport_err)
+    # (task, sample_idx, raw_or_None, transport_err)
+    raw_samples: list[tuple[Task, int, str | None, str | None]] = []
     for task in tasks:
         sys_p, usr_p = SYSTEM_PROMPT, build_user_prompt(task)
         for s in range(args.k):
@@ -781,11 +803,12 @@ def cmd_run(args) -> int:
     for ename in engines:
         eng = ENGINES[ename]
         grades = []
-        for task, s, raw, terr in raw_samples:
-            if raw is None:
-                grades.append(Grade(task=task.id, sample=s, error=f"transport: {terr}", fail_stage="transport"))
+        for task, s, raw_text, terr in raw_samples:
+            if raw_text is None:
+                grades.append(Grade(task=task.id, sample=s,
+                                    error=f"transport: {terr}", fail_stage="transport"))
             else:
-                grades.append(grade(task, raw, eng, s))
+                grades.append(grade(task, raw_text, eng, s))
         n = len(grades)
         passed = sum(g.passed for g in grades)
         by_task = {}
@@ -826,7 +849,10 @@ def cmd_run(args) -> int:
         print(f"fail stages: {stage_totals}")
         for tid, d in by_task.items():
             tier = TASKS_BY_ID[tid].tier
-            print(f"  [{tier:4s}] {tid:22s} pass@1={d['pass_at_1']:<5} pass@{args.k}={d['pass_at_k']}  {d['fail_stages']}")
+            print(
+                f"  [{tier:4s}] {tid:22s} pass@1={d['pass_at_1']:<5} "
+                f"pass@{args.k}={d['pass_at_k']}  {d['fail_stages']}"
+            )
 
     # dialect-cost readout: exec vs monty on the SAME generated outputs
     if len(rows) > 1:
@@ -836,7 +862,10 @@ def cmd_run(args) -> int:
             verdict = ("Monty dialect costs nothing here" if delta == 0 else
                        f"Monty dialect LOWERS pass@1 by {-delta}" if delta < 0 else
                        "Monty ran code exec rejected (looser)")
-            print(f"\nMONTY-DIALECT READOUT: exec={base['exec']} vs monty={base['monty']}  Δ={delta:+}  → {verdict}")
+            print(
+                f"\nMONTY-DIALECT READOUT: exec={base['exec']} vs monty={base['monty']}  "
+                f"Δ={delta:+}  → {verdict}"
+            )
     print(f"\nappended {len(rows)} row(s) → {LEDGER}")
     return 0
 
@@ -863,7 +892,10 @@ def cmd_summary(args) -> int:
     latest = {}
     for r in rows:
         latest[(r["target"], r["engine"], r.get("tier", "all"))] = r
-    print(f"{'target':16s} {'engine':6s} {'tier':5s} {'k':>3s} {'pass@1':>7s}  by_tier / fail_stages")
+    print(
+        f"{'target':16s} {'engine':6s} {'tier':5s} {'k':>3s} {'pass@1':>7s}  "
+        "by_tier / fail_stages"
+    )
     print("-" * 78)
     for (tgt, eng, tier), r in latest.items():
         print(f"{tgt:16s} {eng:6s} {tier:5s} {r['k']:>3} {r['pass_at_1']:>7}  "
@@ -881,7 +913,10 @@ def cmd_summary(args) -> int:
         verdict = ("size IS likely the blocker" if delta < -0.2 else
                    "size NOT clearly the blocker" if abs(delta) <= 0.2 else
                    "local beats online (?)")
-        print(f"  [{eng}/{tier}] local={loc['pass_at_1']} vs {tgt}={r['pass_at_1']}  Δ={delta:+}  → {verdict}")
+        print(
+            f"  [{eng}/{tier}] local={loc['pass_at_1']} vs {tgt}={r['pass_at_1']}  "
+            f"Δ={delta:+}  → {verdict}"
+        )
         shown = True
     if not shown:
         print("  (need matching local-gemma + other-target rows at the same engine+tier)")
@@ -890,27 +925,72 @@ def cmd_summary(args) -> int:
 
 # --- offline grader self-test (no model) -----------------------------------
 _GOOD = {
-    "sum_lines": "```python\ntotal = 0\nfor p in list_files('src'):\n    total += count_lines(read_file(p))\nresult = total\n```",
-    "find_todo": "```python\nresult = None\nfor p in list_files('src'):\n    if 'TODO' in read_file(p):\n        result = p\n        break\n```",
-    "big_balance": "```python\nbest = None\nfor uid in [1, 2, 3]:\n    u = get_user(uid)\n    if best is None or u['balance'] > best['balance']:\n        best = u\nresult = best['id']\n```",
-    "orders_over_10": "```python\nresult = sum(o['amount'] for o in get_orders(42) if o['amount'] > 10)\n```",
-    "debug_plugins": "```python\ncfg = parse_json(read_file('config.json'))\nif cfg['debug']:\n    result = cfg['plugins']\nelse:\n    result = []\n```",
-    "count_big_files": "```python\nresult = 0\nfor p in list_files('src'):\n    if count_lines(read_file(p)) > 2:\n        result += 1\n```",
+    "sum_lines": (
+        "```python\ntotal = 0\nfor p in list_files('src'):\n"
+        "    total += count_lines(read_file(p))\nresult = total\n```"
+    ),
+    "find_todo": (
+        "```python\nresult = None\nfor p in list_files('src'):\n"
+        "    if 'TODO' in read_file(p):\n        result = p\n        break\n```"
+    ),
+    "big_balance": (
+        "```python\nbest = None\nfor uid in [1, 2, 3]:\n    u = get_user(uid)\n"
+        "    if best is None or u['balance'] > best['balance']:\n        best = u\n"
+        "result = best['id']\n```"
+    ),
+    "orders_over_10": (
+        "```python\nresult = sum(o['amount'] for o in get_orders(42) if o['amount'] > 10)\n```"
+    ),
+    "debug_plugins": (
+        "```python\ncfg = parse_json(read_file('config.json'))\nif cfg['debug']:\n"
+        "    result = cfg['plugins']\nelse:\n    result = []\n```"
+    ),
+    "count_big_files": (
+        "```python\nresult = 0\nfor p in list_files('src'):\n"
+        "    if count_lines(read_file(p)) > 2:\n        result += 1\n```"
+    ),
 }
 # Hard-tier golden solutions (nesting, try/except error-handling, argmax, filter).
 _GOOD_HARD = {
-    "orders_gt10_count": "```python\nresult = 0\nfor uid in [1, 2, 3]:\n    for o in get_orders(uid):\n        if o['amount'] > 10:\n            result += 1\n```",
-    "sum_existing_balances": "```python\ntotal = 0\nfor uid in list_user_ids():\n    try:\n        total += get_user(uid)['balance']\n    except Exception:\n        pass\nresult = total\n```",
-    "longest_file": "```python\nbest = None\nbest_n = -1\nfor p in list_files('src'):\n    n = count_lines(read_file(p))\n    if n > best_n:\n        best_n = n\n        best = p\nresult = best\n```",
-    "long_plugins": "```python\ncfg = parse_json(read_file('config.json'))\nresult = [name for name in cfg['plugins'] if len(name) > 4]\n```",
-    "top2_balance_sum": "```python\nbals = sorted([get_user(u)['balance'] for u in [1, 2, 3]], reverse=True)\nresult = bals[0] + bals[1]\n```",
+    "orders_gt10_count": (
+        "```python\nresult = 0\nfor uid in [1, 2, 3]:\n    for o in get_orders(uid):\n"
+        "        if o['amount'] > 10:\n            result += 1\n```"
+    ),
+    "sum_existing_balances": (
+        "```python\ntotal = 0\nfor uid in list_user_ids():\n    try:\n"
+        "        total += get_user(uid)['balance']\n    except Exception:\n        pass\n"
+        "result = total\n```"
+    ),
+    "longest_file": (
+        "```python\nbest = None\nbest_n = -1\nfor p in list_files('src'):\n"
+        "    n = count_lines(read_file(p))\n    if n > best_n:\n        best_n = n\n"
+        "        best = p\nresult = best\n```"
+    ),
+    "long_plugins": (
+        "```python\ncfg = parse_json(read_file('config.json'))\n"
+        "result = [name for name in cfg['plugins'] if len(name) > 4]\n```"
+    ),
+    "top2_balance_sum": (
+        "```python\nbals = sorted([get_user(u)['balance'] for u in [1, 2, 3]], reverse=True)\n"
+        "result = bals[0] + bals[1]\n```"
+    ),
 }
 _BAD = {
-    "hardcoded": ("sum_lines", "```python\nresult = 9\n```"),               # fail: tools/orchestration
-    "syntax":    ("find_todo", "```python\nfor p in list_files('src'\n  result = p\n```"),  # parse
-    "no_fence":  ("orders_over_10", "result = sum(o['amount'] for o in get_orders(42))"),   # format + wrong
-    "wrong_val": ("orders_over_10", "```python\nresult = sum(o['amount'] for o in get_orders(42))\n```"),  # correct? no: includes 5 -> 45 != 40
-    "no_skip":   ("sum_existing_balances", "```python\nresult = sum(get_user(u)['balance'] for u in list_user_ids())\n```"),  # crashes on missing id -> exec fail
+    "hardcoded": ("sum_lines", "```python\nresult = 9\n```"),  # fail: tools/orchestration
+    # parse failure: unclosed paren in the for-loop
+    "syntax":    ("find_todo", "```python\nfor p in list_files('src'\n  result = p\n```"),
+    # format + wrong: no code fence
+    "no_fence":  ("orders_over_10", "result = sum(o['amount'] for o in get_orders(42))"),
+    # correct? no: includes 5 -> 45 != 40
+    "wrong_val": (
+        "orders_over_10",
+        "```python\nresult = sum(o['amount'] for o in get_orders(42))\n```",
+    ),
+    # crashes on missing id -> exec fail
+    "no_skip":   (
+        "sum_existing_balances",
+        "```python\nresult = sum(get_user(u)['balance'] for u in list_user_ids())\n```",
+    ),
 }
 
 
@@ -921,7 +1001,10 @@ def cmd_selftest(args) -> int:
     for tid, code in {**_GOOD, **_GOOD_HARD}.items():
         g = grade(TASKS_BY_ID[tid], code, engine, 0)
         status = "PASS" if g.passed else f"FAIL@{g.fail_stage}({g.error})"
-        print(f"  [{TASKS_BY_ID[tid].tier:4s}] {tid:22s} {status}  calls={g.runtime_calls} correct={g.correct}")
+        print(
+            f"  [{TASKS_BY_ID[tid].tier:4s}] {tid:22s} {status}  "
+            f"calls={g.runtime_calls} correct={g.correct}"
+        )
         ok = ok and g.passed
     print("== negative cases (should NOT pass) ==")
     for name, (tid, code) in _BAD.items():

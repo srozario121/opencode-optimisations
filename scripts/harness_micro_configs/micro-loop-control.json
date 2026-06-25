@@ -1,0 +1,14 @@
+{
+  "name": "micro-loop-control",
+  "description": "L5 (item 16) no-regression check on micro: opencode permission.doom_loop=deny + agent.build.continue_loop_on_deny=true. Micro tasks don't loop, so this should equal micro-baseline (confirms L5 doesn't harm normal short tasks). The informative L5 arm is the SWE subset (loop-control config).",
+  "sampling": {},
+  "env": {},
+  "system_prompt": null,
+  "rules": null,
+  "skill": null,
+  "tools_variant": "default",
+  "opencode_config": {
+    "permission": { "doom_loop": "deny" },
+    "agent": { "build": { "continue_loop_on_deny": true } }
+  }
+}

@@ -172,7 +172,8 @@ def run_react(task, chat, max_turns=12, max_tokens=320):
         if obj is None:
             bad_msgs += 1
             messages.append({"role": "user",
-                             "content": 'Respond with ONE JSON object only: {"tool":...} or {"final":...}.'})
+                             "content": 'Respond with ONE JSON object only: '
+                                        '{"tool":...} or {"final":...}.'})
             continue
         if "final" in obj:
             final = obj["final"]
@@ -226,7 +227,8 @@ def run_codemode(task, chat, engine, repairs=1, max_tokens=1024):
         "arm": "codemode", "task": task.id, "passes": passes, "wall_s": round(wall, 2),
         "prompt_tokens": ptoks, "completion_tokens": ctoks, "total_tokens": ptoks + ctoks,
         "tool_calls": g.runtime_calls if g else 0, "terminated": True,
-        "correct": bool(g and g.passed), "fail": "" if (g and g.passed) else (g.fail_stage if g else "none"),
+        "correct": bool(g and g.passed),
+        "fail": "" if (g and g.passed) else (g.fail_stage if g else "none"),
         "bad_msgs": 0,
     }
 
@@ -339,7 +341,7 @@ def cmd_summary(args):
     if not os.path.exists(LEDGER):
         print("no runs yet")
         return 0
-    rows = [json.loads(l) for l in open(LEDGER) if l.strip()]
+    rows = [json.loads(line) for line in open(LEDGER) if line.strip()]
     r = rows[-1]
     print(f"latest run: model={r['model']} engine={r['engine']} k={r['k']} tasks={r['tasks']}")
     print(f"{'arm':10s} {'pass@1':>7s} {'passes':>7s} {'wall_s':>7s} {'tokens':>7s}  fail_modes")
@@ -381,12 +383,14 @@ def cmd_selftest(args):
         return '{"tool": "get_user", "args": [1]}', {"prompt_tokens": 50, "completion_tokens": 8}
 
     r2 = run_react(cp.TASKS_BY_ID["big_balance"], loop_react, max_turns=5)
-    print(f"  react no-term: terminated={r2['terminated']} fail={r2['fail']} (expect no_termination)")
+    print(f"  react no-term: terminated={r2['terminated']} fail={r2['fail']} "
+          "(expect no_termination)")
     ok = ok and (r2["fail"] == "no_termination")
 
     # Scripted code-mode: a correct code block in one shot.
     def scripted_code(messages, max_tokens):
-        code = "```python\ntotal = 0\nfor p in list_files('src'):\n    total += count_lines(read_file(p))\nresult = total\n```"
+        code = ("```python\ntotal = 0\nfor p in list_files('src'):\n"
+                "    total += count_lines(read_file(p))\nresult = total\n```")
         return code, {"prompt_tokens": 200, "completion_tokens": 40}
 
     c = run_codemode(cp.TASKS_BY_ID["sum_lines"], scripted_code, cp.ENGINES["exec"], repairs=1)
@@ -404,7 +408,8 @@ def cmd_selftest(args):
         return next(seq), {"prompt_tokens": 150, "completion_tokens": 30}
 
     c2 = run_codemode(cp.TASKS_BY_ID["sum_lines"], repair_code, cp.ENGINES["exec"], repairs=1)
-    print(f"  codemode repair: correct={c2['correct']} passes={c2['passes']} (expect correct=True passes=2)")
+    print(f"  codemode repair: correct={c2['correct']} passes={c2['passes']} "
+          "(expect correct=True passes=2)")
     ok = ok and c2["correct"] and c2["passes"] == 2
 
     print("\nSELFTEST", "OK" if ok else "FAILED")
@@ -417,10 +422,12 @@ def main(argv=None):
 
     rn = sub.add_parser("run", help="run the A/B against the live local model")
     rn.add_argument("--arms", nargs="+", choices=list(ARMS), default=["react", "codemode"])
-    rn.add_argument("--tasks", nargs="*", default=None, help="task ids (default: round-trip-heavy subset)")
+    rn.add_argument("--tasks", nargs="*", default=None,
+                    help="task ids (default: round-trip-heavy subset)")
     rn.add_argument("--k", type=int, default=3, help="samples per task per arm")
     rn.add_argument("--engine", choices=list(cp.ENGINES), default="exec", help="code-mode sandbox")
-    rn.add_argument("--repairs", type=int, default=1, help="code-mode repair attempts on a failed run")
+    rn.add_argument("--repairs", type=int, default=1,
+                    help="code-mode repair attempts on a failed run")
     rn.add_argument("--max-turns", type=int, default=12, help="flat-ReAct turn cap")
     rn.add_argument("--temperature", type=float, default=0.2)
     rn.add_argument("--base-url", default=BASE_URL, help="OpenAI-compatible /v1 endpoint")

@@ -7,9 +7,8 @@ claude-mem memory and the `docs/` research.
 > **History note.** This repo was *extracted* (item 15) from a larger personal
 > toolkit (`admin`), where the original 2,475-line TODO.md (items 1–16) lived.
 > That ledger did not come across — items 1–16 were reconstructed from claude-mem
-> cross-session memory so the numbering stays continuous. Items 1–15, **17, 21, and
-> 22** are recorded here; the open work (items 16, 18, 19, 20, and the optional 21.4c
-> follow-up) remains in `TODO.md`.
+> cross-session memory so the numbering stays continuous. Items 1–15, **16, 17, 21,
+> and 22** are recorded here; the open work (items 18, 19, 20) remains in `TODO.md`.
 
 ## Done (items 1–15)
 
@@ -34,7 +33,47 @@ claude-mem memory and the `docs/` research.
   ⚠ **Did NOT transfer to the full harness** — see item 16 (in `TODO.md`).
 - **15** — Extracted the opencode stack into this standalone published repo. **= this repo.**
 
-## Done (items 17, 21, 22)
+## Done (items 16, 17, 21, 22)
+
+- **16** — **Full-harness trace-driven fixes (round 2) — mechanical-lever sweep
+  COMPLETE.** The full harness scored **0/8** on the frozen 8-instance sympy subset
+  (item-14's micro-suite win did not transfer). Built the measurement floor, swept
+  **every** opencode-side / proxy lever L0–L6 under K≥3, and reached a decisive
+  conclusion: **no harness-mechanics lever moves SWE 0→>0 — the bottleneck is model
+  capability, not the harness** (confirmed independently by item 22's online control).
+  - **Enablers (E0/E1/E2/E-sampling).** E1 instance timeout 30→10 min; E2 real-time
+    per-episode heartbeat (Popen-streams opencode stderr loop steps + deadline kill);
+    E0 episode-metrics instrumentation (`parse_episode_jsonl` + degenerate-loop gradient
+    table; reliable activity signal = `tool_call_rounds` from `step_finish.reason`, since
+    `tool_use` events are unreliable). E-sampling: verified mlx-lm 0.31.3 honours
+    `repetition_penalty`/`repetition_context_size` (NOT `no_repeat_ngram_size`), and the
+    wire path end-to-end (opencode's `@ai-sdk/openai-compatible` serialises
+    `repetition_penalty` **top-level** onto the request body).
+  - **⚑ Methodology finding (shapes every lever A/B).** The tool-call generation path is
+    **non-deterministic even at temperature=0 + fixed seed** (MLX/Metal float-kernel
+    nondeterminism, below the sampling layer; frozen stack — no knob fixes it). ⇒
+    adopt/reject requires **K≥3 runs/config**, mean delta clearing the run-to-run spread.
+    `harness_eval.py run --repeats K` + a "K-run aggregates" summary table.
+  - **Tiered baseline gradient.** Micro (T1/T2) ≈ ceiling (T1 4/4, T2 ~4–6/6, T3 4/4);
+    SWE (T3/T4) **0/8** (K=3, spread 0–0). The cliff is exactly synthetic→real (T2→T3) — a
+    capability wall; dominant SWE mode is `tests-failed` (real edits, wrong fix).
+  - **Lever verdicts (L0–L6 — none move SWE 0→>0):** **L0** baseline 0/8. **L1**
+    anti-repetition — REJECTED as a pass-mover (Δ inside spread; safe, holds ceiling;
+    wire-verified). **L3** edit-application — two real bugs FIXED (L3a diff-vs-`base_commit`
+    so committed fixes aren't mis-scored no-edit; L3b `.opencode/tools/edit.ts` forgiving
+    matcher) = correct *insurance*, target defects intermittent. **L5** doom_loop —
+    REJECTED (SWE timeout 7→7 unchanged; opencode's detector fires on *identical* repeated
+    calls, but this stack's timeouts are varied churn / one long slow generation — wrong
+    detector; micro no-regression 1.0). **L6** no-think (`MLX_PROXY_NO_THINK=1`) —
+    CONDITIONAL, not adopted (micro K=6 broke its perfect ceiling; SWE regression check
+    found real-edit-attempts 12→4, +10% wall-clock — helps executor turns, **hurts
+    reasoning-dependent fixes**; needs per-turn gating the frozen stack lacks). **L2**/**L4**
+    never triggered → not built. Configs in `scripts/harness_configs/` +
+    `scripts/harness_micro_configs/`.
+  - **Conclusion:** harness floor solid; every lever has a documented adopt/reject; the
+    binding constraint is capability on real fixes. The only tier with headroom is the
+    **micro gradient (T1/T2)** — the cheap fitness signal for item 19 (GEPA), now
+    **UNBLOCKED**. Docs: `docs/opencode-local.md`, `docs/harness-engineering-research.md`.
 
 - **22** — **Online-model harness-soundness control (diagnostic for item 16).**
   Ran the **exact same full harness** (frozen 8-instance tier≥3 sympy subset, same
@@ -115,5 +154,36 @@ claude-mem memory and the `docs/` research.
     codemode's edge shrinks to ~24%; it still clearly wins non-self-batched cases
     (def_count grep×4 → 2 calls, −56% wall) and never lost, but does **not** fix the
     degenerate-loop. **codemode kept enabled**; cite 21.3 as a bash-less upper bound.
-  - **21.4c** (firm up k≥5 + find code-mode's niche vs `bash`; final adopt/reject)
-    remains **open in `TODO.md`**, gated behind item 16.
+  - **21.4c** firmed up at **k=5** on **bash-hostile** tasks (multi-step parse,
+    conditional aggregation, cross-file reasoning) vs the same bash-equipped baseline
+    — `scripts/codemode_niche_ab.py`, ledger `codemode-niche-ab.jsonl`, 4 tasks ×
+    k=5 × 2 arms = 40 episodes at the 600s Gemma cap. **Code-mode's real niche is
+    confirmed — but it is a RELIABILITY/LATENCY win, not a correctness win.** Overall
+    (20 episodes/arm): **termination 1.00 vs 0.80** (baseline timed out at 600s on
+    20%; codemode never did), **wall-clock 150.6s vs 286.9s (~1.9× faster**, ~2.2–2.9×
+    on the two timeout-prone tasks), **round-trips 1.55 vs 2.65 calls** — yet
+    **correctness REGRESSED, 0.55 vs 0.80**. Per-task the separation is clean and
+    mechanistic: on `const_sum`/`add_docstring_count` the baseline can't express the
+    parse as a shell one-liner, falls into grep/read churn, and **times out 40%** of
+    the time, while codemode single-shots it (ok 1.0, ~3× faster); on `orphan_count`
+    the baseline's grep-churn (7.6 calls) lands the right answer **5/5** where codemode
+    collapses to 2 calls but is **1/5 correct** (the weak Gemma writes buggy
+    orchestration code — e.g. `name.isalpha()` rejecting underscore constants); on
+    `sentinel_digit_sum` (a single-call task) the arms are **identical** and the model
+    **doesn't even invoke codemode** (used `grep`). Two enabling facts surfaced: the
+    sandbox is **builtins-only** (the model reaches for `import re` and the call dies —
+    a `no-import` nudge is required for code-mode to work on parse tasks), and the
+    bash-equipped baseline **never actually used `bash` (0%)** on these tasks — even
+    when available, the weak model defaults to grep/read round-trips when there's no
+    clean shell one-liner, which refines 21.4b: `bash` only tempers code-mode where a
+    one-liner exists. **Verdict — ADOPT (keep `codemode` enabled/available):** it is a
+    net-positive, never-times-out tool that ~3×-speeds and de-churns genuinely
+    multi-step tasks, and the model selects it ~75% of the time on those. **But do NOT
+    add a default-on global nudge steering the model into it:** on the frozen
+    capability-bound model it converts churn-to-timeout into fast-but-wrong (the
+    bottleneck shifts from round-trips to code quality — the same item-16 wall), so a
+    forced default trades correctness for speed. Revisit the default-on question only
+    if model capability moves (items 16/19). New `codemode_niche_ab.py` is ruff- +
+    mypy-clean and its offline `selftest` passes (pre-existing ruff/mypy debt in the
+    sibling `codegen_probe.py`/`codemode_ab.py`/`codemode_prod_ab.py` is untouched and
+    out of scope). Doc: `docs/codemode-setup.md`.
