@@ -1,0 +1,11 @@
+{
+  "name": "rep-penalty",
+  "description": "L1 (item 16): anti-repetition sampling. Sets repetition_penalty=1.1 + repetition_context_size=20 (the mlx-lm 0.31.3 server reads BOTH from the request body; no_repeat_ngram_size is NOT supported and silently dropped, so it is not used). Wire path verified live 2026-06-24: opencode's @ai-sdk/openai-compatible provider serialises repetition_penalty top-level into the request body (scratchpad wire_check.py). Targets the degenerate decode-loop mode (repeated planning sentence); note that mode was 0/8 in L0, so this is a cheap config-only experiment, not the lead lever. Temperature left at baseline so the effect is attributable to anti-repetition alone.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {
+    "repetition_penalty": 1.1,
+    "repetition_context_size": 20
+  },
+  "system_prompt": null
+}

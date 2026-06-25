@@ -1,9 +1,11 @@
 # TODO — opencode-optimisations
 
-The repo's running work-ledger. Item **16** is the open, diagnosed bottleneck
-(carried over from the original ledger); items 18–20 are the open work from the
-2026-06-22 planning session. **Completed items 1–15, 17, and 21 now live in
-`CHANGELOG.md`** (item 21's optional 21.4c follow-up is still open below).
+The repo's running work-ledger. Items **18–20** are the open work from the
+2026-06-22 planning session (plus item 21's optional 21.4c follow-up). **Completed
+items 1–15, 16, 17, 21, and 22 now live in `CHANGELOG.md`.** Item 16 (the dominant
+harness bottleneck) closed 2026-06-25: the L0–L6 mechanical-lever sweep is complete
+and the 0/8 is **capability-bound, not a harness defect** — so prompt/skill work
+(item 19) is now unblocked.
 
 > **Fixed constraints (carry-through from items 8–11, non-negotiable for every
 > open item below).** Fully local / offline at serve time; **16 GB M1**
@@ -27,387 +29,6 @@ The repo's running work-ledger. Item **16** is the open, diagnosed bottleneck
 ---
 
 ## Open
-
-### 16. Full-harness trace-driven fixes (round 2)  ▲▲ PREREQUISITE / dominant bottleneck
-
-**The core finding that reframes everything below.** Item 14's micro-suite win
-(0.62→1.00) **did not transfer** — the full harness still scored **0/8 on
-SWE-bench**. A review of **16 episode traces** found the bottleneck is **not prompt
-phrasing** but concrete harness/tool defects, **dominated by degenerate decoding
-loops** (the model repeats the same planning sentence 15–25× before any tool call,
-burning the whole episode budget). 7 failure modes were catalogued with instance
-IDs as evidence.
-
-> **Implication for items 17–19:** prompt/skill optimisation (incl. GEPA) is
-> **premature** until the full harness produces a non-zero, non-degenerate signal.
-> Land the mechanical fixes below **first**.
-
-**Enabling changes (re-implemented FRESH here — DONE 2026-06-23):**
-- [x] **E1 — Reduce default instance timeout 30 → 10 min** (`DEFAULT_INSTANCE_TIMEOUT`
-      in `scripts/harness_eval.py`; long episodes are degenerate, not productive). Done.
-- [x] **E2 — Real-time progress heartbeat** per episode. Done — `run_opencode_episode`
-      now `Popen`-streams opencode's `--print-logs` stderr, parsing `message=loop step=N`
-      to emit `· <iid> +Ns step=K` lines live (plus a 30s "(working…)" tick).
-      Verified live: a real episode streamed step=0…5 in real time. This is also the
-      timeout-enforcement path (deadline kill) and the E0 fallback metric source.
-
-**E0 — Episode-metrics instrumentation (prerequisite — the adopt/reject signal): DONE 2026-06-23.**
-- [x] Emits per-episode signals to the JSONL ledger + renders a "degenerate-loop
-      gradient" table (`_render_episode_metrics`): **degenerate-loop rate** (repeated-line
-      detection on assistant text), **frac-of-budget-to-first-tool-call**,
-      **steps-to-first-edit**, **made-edit rate**, **tool-call + tool-call-error counts**,
-      output-tokens, steps, timeout rate. Parser `parse_episode_jsonl` + 5 selftest
-      checks; **validated against a real captured episode AND end-to-end live**
-      (5 steps / 3 tools / edit@step4 / frac→tool 0.20).
-- **Source (verified live 2026-06-23):** `opencode run --format json` → NDJSON,
-      one event/line `{type,timestamp,sessionID,part}`; types `step_start` /
-      `tool_use` (`part.tool`, `part.callID`, `part.state.{status,input,time}`) /
-      `step_finish` (`part.tokens.output`, `part.reason`) / `text` (`part.text`).
-      ⚠ **Caveat that shaped the design:** `--format json` **buffers to EOF**, so a
-      timed-out (degenerate) episode — the case we most want to measure — leaves an
-      **empty** jsonl. Hence the hybrid: json for completed episodes, streamed-stderr
-      fallback (`steps` + `timeout ∧ ¬exiting-loop ⇒ degenerate`) for timeouts.
-      *(`--print-logs` stderr carries NO assistant text at any log level — only loop
-      steps — so per-token/per-tool detail must come from the json stream.)*
-      Still TODO: fold this schema into `docs/opencode-local.md` (currently in code +
-      this ledger).
-
-**E-sampling — Sampling-plumbing audit (prerequisite for L1; also audits L2):**
-- [x] **CORRECTION (2026-06-23): the original claim was wrong for this repo.** The
-      `sampling` block **IS** consumed — `apply_levers` (`harness_eval.py:351-353`)
-      copies it verbatim into the served model's `options`, and `cmd_run` records it
-      in the ledger. So L2 low-temp *did* have a path. Added `selftest
-      --check-sampling` to lock the forwarding in (asserts the block, incl.
-      `repetition_penalty`, lands in the written `opencode.json`).
-- [x] **mlx-lm 0.31.3 endpoint honours anti-repetition (source-verified, offline).**
-      `mlx_lm/server.py` reads `repetition_penalty` + `repetition_context_size` (and
-      `presence_penalty` / `frequency_penalty`) from the request body and feeds them
-      into `LogitsProcessorArguments` → the sampler (lines 1180-1181, 1390-1398).
-      ⚠ **`no_repeat_ngram_size` is NOT supported** — silently dropped. **→ L1 must
-      use `repetition_penalty`, not `no_repeat_ngram_size`.**
-- [x] **RESOLVED 2026-06-24 — the wire link is verified.** opencode's
-      `@ai-sdk/openai-compatible` provider **DOES serialise the non-OpenAI
-      `repetition_penalty` key top-level into the wire request body** (not dropped,
-      not relocated). Verified non-disruptively (no touch to the live 8080/8081
-      stack): a throwaway capture server on :8099 + one `opencode run` against an
-      `opencode.json` mirroring `apply_levers` with `repetition_penalty` under the
-      model options → captured body keys `[max_tokens, messages, model,
-      repetition_penalty, stream, stream_options, temperature]`, `repetition_penalty
-      = 1.3` at top level (alongside `temperature`). Probe: `scratchpad/wire_check.py`.
-      **⇒ The full L1 chain is now end-to-end verified** (config `sampling` →
-      `opencode.json` model options → wire body top-level → mlx-lm 0.31.3 sampler,
-      which was already source-verified to read it). An L1 number can now be trusted.
-      Runnable config landed: `scripts/harness_configs/rep-penalty.json`.
-
-**Levers — status 2026-06-23 (L0 gradient → L6 diagnosis → full-subset confirm).**
-The original ranking (L1 anti-repetition = top) assumed degenerate decode loops
-dominate. **L0 measured that wrong:** degen 0/8; dominant mode = **dropped-output
-3/8**. Investigated it (L6) → the Gemma-4 template forces thinking when tools are
-present, and `enable_thinking=False` *looked* like a fix on n=4 — but the **full
-8-instance confirm did not replicate it** (dropped 38%→38%). **Net: no lever
-adopted yet.**
-
-> **⚑ METHODOLOGY FINDING (changes how every lever is judged).** The L6 n=4→n=8
-> reversal proves **single-run deltas are unreliable** on this stack — the *same*
-> instance + *same* config flips dropped↔acts across runs. **Investigated the source
-> (2026-06-23) and the fix is NOT a seed:**
-> - The **tool-call generation path is non-deterministic even at `temperature=0`
->   with a fixed `seed`** — replaying one captured request 3× each way gave 3
->   *different* tool calls every time (raw mlx:8081, no proxy). The thinking-ON path
->   *was* stable, but the no-think/tool-call path is not.
-> - This is **MLX/Metal floating-point kernel nondeterminism** (GPU reduction order),
->   *below* the sampling layer — so neither `seed` nor `temperature` can remove it,
->   and the serving stack is **frozen**.
-> - **⇒ The ONLY reliable measurement is K-run averaging.** Adopt/reject requires
->   **K≥3 runs/config** with a delta that clears the run-to-run spread; there is no
->   determinism knob on this stack. A single 8-task pass cannot close a lever.
-> - Constrains item 17 (fitness fn MUST average K repeats) and item 19 (GEPA eval
->   budget ×K). `MLX_PROXY_SEED` was wired (and is honored) but **does not achieve
->   reproducibility here** — kept only for hygiene / any future temp>0 use.
-
-Current order: **(methodology fix first) → L3 (edit, most deterministic) > L5
-(loop) > L1/L2/L4; L6 parked (inconclusive, toggle retained).**
-> **⚑ UPDATE 2026-06-24 (micro-gradient A/Bs, then higher-K + SWE confirm):**
-> **L6 (no-think) — CONDITIONAL wall-clock lever, NOT adopted as a default.** Looked
-> like the strongest arm at micro K=3 (1.0×3, −42% wall-clock) but the K=6 confirm
-> broke the perfect ceiling (r6 0.882, genuine miss) and the **SWE regression check
-> found a real regression** (real edit-attempts 12→4, +10% wall-clock). It helps pure
-> executor turns, **hurts reasoning-dependent fixes** → only viable behind per-turn
-> gating this frozen stack lacks. **L1 — rejected as a pass-mover** (safe, holds
-> ceiling; possible variance-reducer). Net: **no cheap config/proxy lever moves the
-> SWE pass-rate; the T2→T3 capability wall stands. L5 (loop) is the last unrun lever.**
-
-- [x] **L6 — Disable executor "thinking" on tool turns — INVESTIGATED, INCONCLUSIVE
-      (not adopted).** **The dropped-output root cause was NOT streaming repair (that
-      hypothesis was wrong).** Diagnostic capture
-      (`MLX_PROXY_CAPTURE`, built 2026-06-23) + replaying the exact failing request
-      showed: the **Gemma-4 chat template forces a thinking phase whenever `tools`
-      are present**, and the weak E4B executor spends the turn on `reasoning` and
-      emits EOS **without a tool call** (captured turn: 509 reasoning chars, 0 tool
-      calls, `finish=stop`). Replaying with `enable_thinking=False` flipped
-      `finish_reason`→`tool_calls`. **Confirms item 20's "thinking hurts thin
-      executors" on this stack.**
-      - Fix: `mlx_repair_proxy.py` gained **`MLX_PROXY_NO_THINK=1`** (off by default,
-        forwarded by `mlx.sh`) — injects `chat_template_kwargs={"enable_thinking":
-        false}` into tool requests. Request-shaping, not an engine change.
-      - **4-instance A/B looked decisive** (dropped-output 3/3→0/3, rounds 0→14/0→6/
-        0→364) — **but it did NOT replicate.**
-      - **⚠ FULL 8-instance confirm (2026-06-23): NO_THINK NOT adopted — the n=4 win
-        was sampling noise.** dropped-output **38%→38%** (the SAME 3 instances —
-        12481/11400/19007 — dropped again at 0 rounds), pass **0→0**. The capture
-        proves NO_THINK *was* active (13/14 tool responses had `reasoning=0` vs
-        baseline's 509-char reasoning), so thinking was genuinely suppressed — yet the
-        headline metric didn't move. The same instances that *acted* under NO_THINK at
-        n=4 *dropped* at n=8 → **dropped-output is a high-variance / stochastic mode**
-        (no seed, mlx default temp), not a deterministic consequence of thinking.
-        Secondary deltas were noise-level/mixed (mean_rounds 6.4→4.6, timeout 1→0,
-        no-edit 4→5). **Verdict: INCONCLUSIVE — do NOT default `NO_THINK=1`.** Lever
-        kept available (toggle stays), but unproven on this stack.
-      - **Hints (n=4 only — NOT replicated, treat as leads not findings):** under
-        NO_THINK, 12481 once *made an edit that produced no net diff* (→ a lead for
-        **L3 edit-application**) and 19007 once hit **364 tool-call rounds** (→ a lead
-        for **L5 loop control**). Both instances *dropped* (0 rounds) in the full run,
-        so these are unconfirmed — verify under the K-run methodology before acting.
-      - [x] **Capture instrumentation** (`MLX_PROXY_CAPTURE=<dir>`, off by default;
-        dumps `.req.json` + `.resp.json`/`.resp.sse`; never alters served bytes) —
-        reused by item 18 (trace ingestion).
-      - [x] **Full 8-instance confirm DONE** → did not replicate (see ⚠ above).
-      - [x] **REVISITED + CONFIRMED on the item-17 gradient (2026-06-24) — VERDICT:
-        a CONDITIONAL wall-clock lever, NOT a global default; it REGRESSES real fixes.**
-        Ran on the micro gradient (first tier with headroom) AND a SWE regression
-        check, both vs the K=3 controls. Proxy restarted with `NO_THINK=1`
-        (user-authorized; capture confirmed `reasoning_present=False` on tools turns →
-        lever genuinely engaged), then restored to `NO_THINK=0`. Configs in repo
-        (`micro-no-think`, `no-think`).
-        - **Micro K=3 looked like a clean win (1.000 ×3, −42% wall-clock) — but the
-          higher-K confirm BROKE the "perfect ceiling".** At **K=6**: 1.0×5 then **r6
-          0.882** (a genuine wrong-answer — `t1-nav-surcharge` ran 5 tool calls, 51 s,
-          scored 0/4, NOT a timeout). So L6 micro mean **0.980 (spread 0.882–1.0)** vs
-          baseline **0.961 (0.941–1.0)** — higher mean but **wider spread + a WORSE
-          worst-case** than baseline. The K=3 "zero-variance dominance" was **small-n
-          optimism** (exactly the n=4→n=8 pattern the methodology warns of). Pass-rate
-          edge is now within noise. **Only the −42% wall-clock/task (42.7 vs 73.3 s) is
-          robust** — mechanically guaranteed (no reasoning-phase decode).
-        - **SWE regression check (K=3, 24 episodes each) — REAL REGRESSION found:**
-          | failure mode | baseline | no-think |
-          |---|---|---|
-          | tests-failed (*real* attempt) | **12 (50%)** | **4 (17%)** |
-          | no-edit | 5 (21%) | **11 (46%)** |
-          | timeout | 7 (29%) | 9 (38%) |
-          | pass | 0/8 | 0/8 |
-          | wall-clock | 7997 s | **8768 s (+10%)** |
-          No-think makes the model **attempt real fixes far less often** (tests-failed
-          12→4), reverting them to no-edit/timeout, and runs **slower** on SWE (more
-          spinning → 9 vs 7 timeouts). Pass stays 0/8 (capability wall) but the
-          **failure-mode quality degrades**.
-        - **Synthesis (validated locally, not just lit):** NO_THINK helps **pure
-          executor/tool turns** (micro: faster, marginally better) but **hurts
-          reasoning-dependent turns** (SWE real fixes: fewer real attempts, slower) —
-          exactly item-20's "executor thinking hurts / planner thinking helps", now
-          measured on this stack. **⇒ Do NOT default NO_THINK ON globally** — a blanket
-          toggle is net-negative because the harness can't tell an executor turn from a
-          fix-planning turn. It would only pay off behind **per-turn/role gating** (apply
-          to mechanical tool turns, keep thinking for fix turns) — which this frozen
-          stack has no clean seam for. **Lever kept available (toggle), NOT adopted.**
-        - (Standalone L1 wire check is independently RESOLVED — see E-sampling.)
-- **L3 — Edit application — DIAGNOSED 2026-06-23 (reproduced from artifacts).** Two
-      distinct real defects, not the single "whitespace match" originally assumed:
-  - [x] **L3a — patch-capture bug (FIXED).** sympy-12481 (NO_THINK) made a correct
-        edit then ran `git add` + `git commit`. `capture_model_patch` diffed the index
-        **vs HEAD** (`git diff --cached`), so a committed change showed **nothing** →
-        mis-scored `no-edit` and **never tested** (score_instance short-circuits on an
-        empty patch). Fixed: diff the index **vs `base_commit`** (captures the change
-        whether committed or left in the worktree; the docstring already claimed this).
-        Verified by git-semantics test + a new selftest check. Deterministic bug fix —
-        **adopted** (exempt from K-runs).
-  - [x] **L3b — forgiving edit matcher BUILT (`.opencode/tools/edit.ts`).** Shadows
-        the built-in `edit` (filename precedence, like read/grep). Cascade, each step
-        only on the previous miss so already-matching edits are UNCHANGED: (a) exact;
-        (b) strip the read line-number gutter (`\d+ \| `, from `read.ts:110`) off
-        oldString/newString then exact — fixes the 15345 case; (c) whitespace-flexible
-        unique-window match (trim-per-line) with newString re-indented to the file —
-        fixes the 13043 case. Refuses ambiguous (>1) / zero matches. **Validated:**
-        6/6 unit cases incl. both real failures + exact-control + ambiguous/replaceAll
-        (ran the real `execute()` with a stubbed `tool` wrapper); **live smoke** —
-        opencode loads it (no edit.ts error) and a real edit applied end-to-end.
-        Primary metric: **edit-apply success ↑** (deterministic).
-      - [x] **Measured (K=3, 2026-06-23): correct fixes, but NOT exercised this run →
-        no aggregate effect; pass still 0/8.** vs L0: dropped 38%→**38%** (spread
-        0.38–0.38), made_edit 25%→29% (0.12–0.50), pass 0→**0 (spread 0–0)**.
-        Crucially **0 git-commit episodes, 0 `edit:error`s (4 in L0), 0 forgiving-path
-        hits** — the defects L3a/L3b fix (committed edits, gutter/whitespace edit
-        errors) are **intermittent and didn't recur** in these 3 repeats (the model
-        produced different, exactly-matching edits). So L3a/L3b are verified-correct
-        *insurance* that activates when the defect reappears, not a measurable mover
-        on this sample. (L1 wire check NOT addressed — baseline config has no
-        `repetition_penalty` to forward; needs a config that sets it.)
-- [ ] **L2 — grep fixed-string fallback** (`rg -F`) in `.opencode/tools/grep.ts`.
-      **Low — no grep-parse failures observed in L0;** revisit if the metric appears.
-- [ ] **L4 — Post-edit syntax check** feedback (same shadow/hook seam as L3).
-      Secondary — only bites once edits land. Primary: **broken-syntax rate ↓**.
-- [ ] **L5 — doom_loop policy** (native `doom_loop` vs proxy loop-detector).
-      **Promoted (post-L6): 19007 under NO_THINK hit 364 tool-call rounds → timeout**
-      — the genuine degenerate tool-call loop, which only surfaces once thinking is
-      off. Pairs with L6. Primary: **stuck-loop count / max-rounds ↓**.
-- [x] **L1 — Anti-repetition sampling** (`repetition_penalty`, NOT
-      `no_repeat_ngram_size` — mlx-lm drops the latter; see E-sampling).
-      **MEASURED on the micro gradient (2026-06-24, K=3) — NOT ADOPTED as a
-      pass-mover; HOLDS the ceiling; one variance lead.** Wire path VERIFIED
-      (2026-06-24, see E-sampling); configs runnable
-      (`scripts/harness_configs/rep-penalty.json` for SWE,
-      `scripts/harness_micro_configs/micro-rep-penalty.json` for micro;
-      `repetition_penalty=1.1` + `repetition_context_size=20`).
-      Ran on the micro suite (the only tier with headroom — SWE degen rate was 0/8)
-      vs the micro-baseline K=3 control:
-      - **micro-baseline K=3:** checks 34/32/32 → mean **0.961** (spread 0.941–1.0);
-        T1 4/4, T2 4/6 (no-edit×2 at task level), T3 4/4.
-      - **micro-rep-penalty K=3:** checks 33/33/33 → mean **0.971** (spread **0**);
-        T1 4/4, T2 5/6 (no-edit×1), T3 4/4.
-      - **Adopt/reject:** the +0.010 check-level mean delta falls **inside** the
-        baseline spread → does **NOT** clear run-to-run variance → **NOT adopted**
-        per the K-run rule. Tool-call validity did **not** regress (T1/T3 held 4/4;
-        the lone miss was `t2-find-format` 2/3, a check-content near-miss, not a
-        tool-call failure). So anti-repetition is **safe (holds the ceiling) but not
-        a pass-rate lever here** — consistent with its DEMOTED status (target mode
-        absent on this stack).
-      - **Lead worth a dedicated test:** L1 **collapsed run-to-run variance to ZERO**
-        (0.9706 ×3, identical tier histogram each repeat) vs baseline's 0.94–1.0
-        swing — mechanistically it dampens the sampling-path stochasticity that
-        forced K-runs (item-16 methodology finding). n=3 is a hint not proof; if a
-        *variance-reducer* is wanted (to cut future A/B K), test `repetition_penalty`
-        in a variance-focused run (more repeats, report std not just mean).
-- [x] **L0 — Re-baseline** at the 10-min timeout. **DONE 2026-06-23: 0/8** — see
-      the "⚑ L0 baseline result" subsection below for the full E0 gradient that
-      drove this reprioritization.
-
-### ⚑ Tiered baseline result — the gradient now exists (2026-06-24)
-
-First full **tiered** baseline under the post-item-17 / post-codemode harness (user
-chose "tiered baseline first"). Micro K=3 + SWE K=3, then `report`. **This is the
-non-flat gradient item 16 was missing** — a weak model passes the easy rungs and
-falls off a cliff exactly at the synthetic→real boundary:
-
-| tier | what | result |
-|---|---|---|
-| **T1** | single tool-call (synthetic) | **4/4 ✓** |
-| **T2** | multi-step + micro-edit (synthetic) | **~4–6/6 ✓** (K=3: r1 1.0, r2/r3 0.94 — one T2 task drops 2 checks; mild MLX nondeterminism) |
-| **T3** | single-file real SWE fix | **0/3 ✗** |
-| **T4** | multi-file/reasoning SWE fix | **0/5 ✗** |
-
-- **SWE K=3 = 0/8 every repeat (pass mean 0.0, spread 0–0)** — confirms the floor is
-  rock-stable, not a single-draw artifact. Any lever delta must clear a 0-wide spread.
-- **SWE failure histogram: `tests-failed×5`, `no-edit×2`, `timeout×1`.** The shift vs
-  the L0 baseline (which had only `tests-failed×2`) is notable: **more instances now
-  reach a real edit attempt** (5/8 produce a wrong-but-real fix) — i.e. the shipped
-  harness (edit.ts / codemode / L3 fixes) is getting the model to *act*, but the fixes
-  are **wrong**. The remaining gap is **model capability on real fixes, not harness
-  mechanics**.
-- **Verdict reinforced:** the cliff is T2→T3, and it is a *capability* wall. Micro
-  rungs (T1/T2) are the gradient any lever / GEPA must optimise on, because they are
-  the only tiers where a non-zero signal can move. The SWE tiers measure ceiling, not
-  harness polish.
-- Ledger: `~/.config/opencode-optimisations/harness-eval/{ledger,tier-report}.jsonl`;
-  configs `micro-baseline` + `baseline` rows under labels `micro-baseline-tier-r{1,2,3}`
-  / `baseline-tier-r{1,2,3}`.
-
-### ⚑ Where item 16 stands (2026-06-23, after L0 + L6 + L3 + K-run measurement)
-
-**The harness floor is now solid; pass-rate is still 0/8 and the binding constraint
-has shifted off the harness.** Enablers (E0/E1/E2/E-sampling) + K-run support done.
-Levers attempted: **L6** (no-think) inconclusive (noise); **L3a/L3b** correct but
-their target defects didn't recur in the K=3 run (no aggregate effect). Across every
-run the dominant modes are: **dropped/no-edit ~38–50%** (stochastic thinking-stop —
-L6 territory, unfixed) and **tests-failed** (the model edits but the fix is *wrong*).
-The latter is **model capability, not a harness defect** — no remaining lever (L2 grep
-/ L4 syntax / L5 loop) targets "wrong fix" or the stochastic drop.
-
-**Implication / likely pivot:** harness levers appear largely **exhausted for moving
-0→>0 on THIS subset** — 8 SWE-bench-Lite sympy bugs may simply be beyond Gemma-4-E4B
-regardless of harness polish. The highest-value next move is **item 17 (tiered
-validation harness)**: add **T1-class easy tasks** (single-file, one-edit, no-search)
-so a weak model can register a *non-zero* signal at all — without which no lever
-(or GEPA, item 19) has a gradient to optimise. Recommend pausing further L-levers and
-standing up the tiered set. *(RESOLVED 2026-06-23 — item 17 landed: the tiered
-ladder + per-tier × failure-mode report now provide that gradient; T1/T2 are the
-weak-model-passable rungs. A fresh `run` under each lever is the next step.)*
-
-### ⚑ L0 baseline result — first full run on THIS machine (2026-06-23)
-
-Ran `baseline` over the frozen 8-instance sympy subset at the new 10-min cap.
-**0/8 pass** (confirms the premise). But the E0 gradient **updates item 16's
-diagnosis** — this is a *local measurement*, the kind the Evidence policy demands:
-
-| reason | n | E0 signature |
-|---|---|---|
-| no-edit (immediate stop) | 3 | 1 step, **0 tool-call rounds** — answers in prose, never acts |
-| no-edit (churn + false success) | 1 | **8 tool-call rounds**, 4023 out-tok, ended `[runs grep]…"resolved"` but produced no diff |
-| tests-failed (real attempt) | 2 | 10–16 rounds, **made edits**, tests didn't pass |
-| timeout | 1 | 6 rounds, hit the 600s cap |
-| oom | 1 | server crash mid-episode |
-
-- **Degenerate "repeated-sentence" loop rate = 0/8.** The pathology item 16 named
-  as *dominant* (planning sentence repeated 15–25×) **did not appear** at the 10-min
-  cap here. (Caveat: the detector keys on repeated ≥12-char lines; the one churn case
-  emitted `[runs grep]`×8 = 11-char lines, just under threshold — a known limit, not
-  tuned away on n=1.)
-- **`tool_use` events are unreliable** — 21627 had 8 tool-call rounds but emitted 0
-  `tool_use` events. E0 now also records **`tool_call_rounds`** (`step_finish.reason`),
-  the robust activity signal. *(instrumentation hardened post-run; the 8 artifacts
-  were re-parsed in place — no re-run.)*
-- **Lever-priority implication (revisit before L1).** The dominant local modes are
-  **(a) not invoking tools at all (3/8)** and **(b) tool churn / wrong edits (3/8)** —
-  NOT decode-loop repetition. So **L1 (anti-repetition sampling) is not clearly the
-  top lever on this stack**; a tool-invocation / edit-application lever may dominate.
-  This *updates* (does not refute) the admin trace-review diagnosis, which used a
-  30-min cap and possibly different instances. Keep L1 in the slate but let the local
-  gradient drive ordering. n=8, all sympy — widen the subset before over-fitting.
-
-### Design decisions (resolved — plan-review 2026-06-23)
-
-- **Measurement signal** → *add episode metrics now* (E0), independent of item 17;
-  intermediate per-episode signals are the adopt/reject basis. *(user-confirmed)*
-- **L1 location / legality** → *opencode-side sampling param*; `repetition_penalty`
-  is a permitted category-7 sampling lever (like temp/top_p), not an engine change.
-  Forward via the `sampling` block; verify the MLX endpoint honours it. *(user-confirmed)*
-- **Enabling changes** → *re-implement fresh here* (E1, E2); admin versions don't
-  transfer. The two prior `[x]` boxes were wrong for this repo. *(user-confirmed)*
-- **Adopt/reject rule** → per-lever **primary episode metric improves vs baseline
-  AND tool-call validity does not regress**; pass/fail secondary. *(default — not user-confirmed)*
-  **⚑ REVISED 2026-06-23 (after L6's n=4→n=8 reversal): a single run cannot adopt a
-  lever.** The tool-call path is non-deterministic even at `temperature=0`+fixed
-  `seed` (MLX/Metal kernel nondeterminism — verified; no knob fixes it on this frozen
-  stack). The improvement must clear run-to-run variance via **K≥3 runs/config**.
-  Mechanical/deterministic levers (e.g. L3 edit-application) are exempt from K-runs
-  only where the metric is provably draw-independent.
-- **Test design** → **individual vs baseline first (attributable), then bundle the
-  adopted winners** for the combined pass-rate effect. *(default — not user-confirmed)*
-- **Definition of done** → all 5 levers have a documented adopt/reject decision
-  **AND** the adopted bundle yields **≥1 full-harness pass** (0/8 → ≥1/8). *(default — not user-confirmed)*
-
-### Measurement plan
-
-- **Baseline:** `harness_configs/baseline.json` re-run at the new 10-min timeout (L0),
-  with E0 metrics emitted.
-- **Per lever:** one new `harness_configs/*.json` changing only that lever; run the
-  full subset **K≥3 times** (a seed does NOT help — see methodology finding); compare
-  its **primary episode metric** + tool-call-validity vs baseline, requiring the
-  mean delta to exceed the run-to-run spread.
-- **Prereq (blocking lever decisions): K-run harness support — DONE 2026-06-23.**
-  `harness_eval.py run --repeats K` runs the subset K times (one ledger row per
-  repeat, sharing a `repeat_group`), prints a per-config pass mean+spread, and the
-  summary gains a **"K-run aggregates"** table (mean (min–max) of pass / dropped /
-  made_edit / degen / steps via `_render_repeat_aggregate`; +2 selftest checks).
-  This — not a seed — is what makes lever A/Bs comparable (`MLX_PROXY_SEED` is wired
-  but verified NOT to give reproducibility on MLX/Metal). Keep K≈3 given 8–12 tok/s;
-  multiplies item 19's GEPA budget by K. **Usage:** `run --config <c> --repeats 3`.
-- **Bundle:** combine adopted levers; success = full-harness pass-rate 0 → >0.
-- **Gate (every run):** tool-call round-trip validity must not regress vs baseline;
-  `make check` (ruff + mypy + pytest) green for any harness code touched.
-
-### Documentation
-
-- `docs/opencode-local.md` — episode-metrics schema + each lever's result.
-- `docs/harness-engineering-research.md` — cross-link L1 as a category-7 sampling lever.
 
 ### 18. Improvement-recommender agent  ▲ (was drafted as "13")
 
@@ -586,18 +207,18 @@ build/validation decisions were **user-confirmed 2026-06-24**.
 ### 19. Structured prompt-optimisation (GEPA)  ← deep-research item (was drafted as "14")
 
 **Goal.** Apply a structured optimiser to the harness's text levers (system/agent
-prompts, tool descriptions, skill docs). **GATED:** do not start until item 16
-lands and the full harness gives a non-zero, non-degenerate signal — item 16
-showed prompt-phrasing changes don't move a harness that's failing mechanically.
+prompts, tool descriptions, skill docs). **Item-16 gate is now SATISFIED** (closed
+2026-06-25, `CHANGELOG.md`): the L0–L6 lever sweep is complete and item 22's online
+control proved the harness sound, so the full harness gives a non-degenerate signal
+and the 0/8 is capability-bound — prompt/skill optimisation is unblocked.
 
-> **⛔ PRECONDITION (checkable — 19.2 work may not begin until BOTH ticks land).**
-> Item 19 is **BLOCKED until: (1)** item-16 **L5** (`doom_loop` policy — the last
-> unrun item-16 lever) reaches a **recorded adopt/reject verdict in `TODO.md`**,
-> **AND (2)** the **T2 gate-check passes** (19.2 task below). Either failing leaves
-> item 19 gated; record "**no climbable signal yet**" and stop. Rationale: item-16's
-> current evidence is a **stable 0/8 T3/T4 capability wall** (not harness mechanics),
-> and the only tier with real headroom is the synthetic **T2** rung — so GEPA only has
-> somewhere to climb if T2 still shows a non-saturated, non-noise gradient after L5.
+> **⛔ PRECONDITION (1 of 2 done; 19.2 work begins once the T2 gate-check passes).**
+> Item 19's blocker **(1)** — item-16 **L5** reaching a recorded adopt/reject verdict —
+> is now **MET** (L5 `doom_loop` REJECTED, see `CHANGELOG.md`; the whole L0–L6 sweep is
+> closed). Remaining blocker **(2):** the **T2 gate-check** (19.2 task below) must pass.
+> Rationale: item-16's evidence is a **stable 0/8 T3/T4 capability wall** (not harness
+> mechanics), and the only tier with real headroom is the synthetic **T2** rung — so GEPA
+> only has somewhere to climb if T2 still shows a non-saturated, non-noise gradient.
 
 ### Design decisions (resolved — plan-review 2026-06-24)
 
@@ -721,9 +342,11 @@ showed prompt-phrasing changes don't move a harness that's failing mechanically.
 ### 20. Planning-first phase / orchestration topology  ← deep-research item
 
 **Goal.** Decide whether to add a **dedicated planning phase before execution**,
-and how much orchestration machinery is worth it for a weak local model. **GATED
-behind item 16** — a planning phase interacts directly with the degenerate-loop fix
-(see risk below). Opencode mechanics confirmed: it natively ships a read-only
+and how much orchestration machinery is worth it for a weak local model. **Item-16
+gate now SATISFIED** (closed 2026-06-25, `CHANGELOG.md`) — the E0 instrumentation 20.3
+needs exists, and item-16 established the 0/8 is capability-bound (no degenerate-loop
+fix landed; the loop modes were not the bottleneck). Opencode mechanics confirmed: it
+natively ships a read-only
 **`Plan`** primary agent + a **`Build`** primary agent, and a **`task`** tool that
 delegates to subagents (`subagent_type`, background, resume).
 
@@ -772,7 +395,7 @@ delegates to subagents (`subagent_type`, background, resume).
       and **tokens + wall-clock per task** (does multi-agent really cost 8–15× *here*?).
       **Decisions this run must settle locally:** does planning-first *lower or raise*
       the loop rate (no source answers this)? is multi-agent actually worse on *this*
-      stack, or did the literature mislead? Gated behind item 16 (needs E0 metrics).
+      stack, or did the literature mislead? Item-16 gate satisfied (E0 metrics exist).
 
 ### 21. Sandboxed code-execution ("code mode") — 21.1–21.4b DONE (see `CHANGELOG.md`)
 
@@ -786,10 +409,14 @@ does **not** fix the item-16 degenerate-loop. Only the optional follow-up remain
 
 - [ ] **21.4c (optional follow-up) — firm up + find code-mode's real niche.** Raise k (≥5) and add
       tasks where bash is a poor fit (structured/multi-step parsing, conditional logic on file
-      contents) — the regime where codemode should separate cleanly from a `bash` baseline. Re-run
-      after item-16's degenerate-loop fix lands (so find_clamp-style tasks don't just time out).
+      contents) — the regime where codemode should separate cleanly from a `bash` baseline.
       Only then make the final adopt/reject + decide whether to enable `codemode` by default in the
-      global config. **Gated behind item 16.**
+      global config. **Item-16 gate update (2026-06-25):** item 16 closed **without** a
+      degenerate-loop fix — the L0–L6 sweep found the timeouts are a capability/varied-churn mode,
+      not an opencode-detectable loop (L5 rejected), so no fix is coming. So drop the original
+      "wait for the loop fix" precondition: find_clamp-style tasks **will** still sometimes time out
+      on a weak model — design 21.4c tasks to tolerate that (more samples, or tasks that complete
+      within budget) rather than waiting on a fix that won't land.
 
 ### 22. Online-model harness-soundness control (BigPickle / free opencode mode)  ▲ — diagnostic for item 16
 

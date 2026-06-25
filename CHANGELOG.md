@@ -7,8 +7,8 @@ claude-mem memory and the `docs/` research.
 > **History note.** This repo was *extracted* (item 15) from a larger personal
 > toolkit (`admin`), where the original 2,475-line TODO.md (items 1–16) lived.
 > That ledger did not come across — items 1–16 were reconstructed from claude-mem
-> cross-session memory so the numbering stays continuous. Items 1–15, **17, 21, and
-> 22** are recorded here; the open work (items 16, 18, 19, 20, and the optional 21.4c
+> cross-session memory so the numbering stays continuous. Items 1–15, **16, 17, 21,
+> and 22** are recorded here; the open work (items 18, 19, 20, and the optional 21.4c
 > follow-up) remains in `TODO.md`.
 
 ## Done (items 1–15)
@@ -34,7 +34,47 @@ claude-mem memory and the `docs/` research.
   ⚠ **Did NOT transfer to the full harness** — see item 16 (in `TODO.md`).
 - **15** — Extracted the opencode stack into this standalone published repo. **= this repo.**
 
-## Done (items 17, 21, 22)
+## Done (items 16, 17, 21, 22)
+
+- **16** — **Full-harness trace-driven fixes (round 2) — mechanical-lever sweep
+  COMPLETE.** The full harness scored **0/8** on the frozen 8-instance sympy subset
+  (item-14's micro-suite win did not transfer). Built the measurement floor, swept
+  **every** opencode-side / proxy lever L0–L6 under K≥3, and reached a decisive
+  conclusion: **no harness-mechanics lever moves SWE 0→>0 — the bottleneck is model
+  capability, not the harness** (confirmed independently by item 22's online control).
+  - **Enablers (E0/E1/E2/E-sampling).** E1 instance timeout 30→10 min; E2 real-time
+    per-episode heartbeat (Popen-streams opencode stderr loop steps + deadline kill);
+    E0 episode-metrics instrumentation (`parse_episode_jsonl` + degenerate-loop gradient
+    table; reliable activity signal = `tool_call_rounds` from `step_finish.reason`, since
+    `tool_use` events are unreliable). E-sampling: verified mlx-lm 0.31.3 honours
+    `repetition_penalty`/`repetition_context_size` (NOT `no_repeat_ngram_size`), and the
+    wire path end-to-end (opencode's `@ai-sdk/openai-compatible` serialises
+    `repetition_penalty` **top-level** onto the request body).
+  - **⚑ Methodology finding (shapes every lever A/B).** The tool-call generation path is
+    **non-deterministic even at temperature=0 + fixed seed** (MLX/Metal float-kernel
+    nondeterminism, below the sampling layer; frozen stack — no knob fixes it). ⇒
+    adopt/reject requires **K≥3 runs/config**, mean delta clearing the run-to-run spread.
+    `harness_eval.py run --repeats K` + a "K-run aggregates" summary table.
+  - **Tiered baseline gradient.** Micro (T1/T2) ≈ ceiling (T1 4/4, T2 ~4–6/6, T3 4/4);
+    SWE (T3/T4) **0/8** (K=3, spread 0–0). The cliff is exactly synthetic→real (T2→T3) — a
+    capability wall; dominant SWE mode is `tests-failed` (real edits, wrong fix).
+  - **Lever verdicts (L0–L6 — none move SWE 0→>0):** **L0** baseline 0/8. **L1**
+    anti-repetition — REJECTED as a pass-mover (Δ inside spread; safe, holds ceiling;
+    wire-verified). **L3** edit-application — two real bugs FIXED (L3a diff-vs-`base_commit`
+    so committed fixes aren't mis-scored no-edit; L3b `.opencode/tools/edit.ts` forgiving
+    matcher) = correct *insurance*, target defects intermittent. **L5** doom_loop —
+    REJECTED (SWE timeout 7→7 unchanged; opencode's detector fires on *identical* repeated
+    calls, but this stack's timeouts are varied churn / one long slow generation — wrong
+    detector; micro no-regression 1.0). **L6** no-think (`MLX_PROXY_NO_THINK=1`) —
+    CONDITIONAL, not adopted (micro K=6 broke its perfect ceiling; SWE regression check
+    found real-edit-attempts 12→4, +10% wall-clock — helps executor turns, **hurts
+    reasoning-dependent fixes**; needs per-turn gating the frozen stack lacks). **L2**/**L4**
+    never triggered → not built. Configs in `scripts/harness_configs/` +
+    `scripts/harness_micro_configs/`.
+  - **Conclusion:** harness floor solid; every lever has a documented adopt/reject; the
+    binding constraint is capability on real fixes. The only tier with headroom is the
+    **micro gradient (T1/T2)** — the cheap fitness signal for item 19 (GEPA), now
+    **UNBLOCKED**. Docs: `docs/opencode-local.md`, `docs/harness-engineering-research.md`.
 
 - **22** — **Online-model harness-soundness control (diagnostic for item 16).**
   Ran the **exact same full harness** (frozen 8-instance tier≥3 sympy subset, same

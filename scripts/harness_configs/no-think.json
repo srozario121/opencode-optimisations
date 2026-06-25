@@ -1,0 +1,8 @@
+{
+  "name": "no-think",
+  "description": "L6 (item 16) on the SWE-bench subset: identical to baseline EXCEPT the repair proxy is restarted with MLX_PROXY_NO_THINK=1 (injects chat_template_kwargs={enable_thinking:false} on tool turns). The lever lives in the PROXY (separate process), not this config — this file exists only to give the ledger a distinct config_name for the SWE regression check. Run while the NO_THINK proxy is live. Purpose: confirm no-think does NOT regress real fixes (the SWE bottleneck is tests-failed/capability, which needs reasoning) — compare failure histogram + wall-clock vs baseline SWE K=3 (0/8). Counterpart control: baseline.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null
+}
