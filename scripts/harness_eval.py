@@ -1386,8 +1386,8 @@ def gepa_gate_check(t2_mean: float | None, spread: float | None,
             "climbable": climbable}
 
 
-def gepa_fitness(*, cand_t2_frac: float, cand_floor_count: int,
-                 base_floor_count: int, cand_t1_frac: float,
+def gepa_fitness(*, cand_t2_frac: float, cand_floor_count: float,
+                 base_floor_count: float, cand_t1_frac: float,
                  base_t1_frac: float, lam: float = GEPA_LAMBDA) -> dict:
     """The 19.3 fitness scalar: ``score = T2_frac − λ·max(0, floor_rise)`` with a
     T1 HARD GATE (any T1 drop below baseline ⇒ rejected outright, not penalised).
@@ -1439,6 +1439,78 @@ def gepa_assert_serving_offline(optimisee_cfg: dict) -> None:
     if isinstance(prov, dict) and any(p != DEFAULT_PROVIDER for p in prov):
         raise ValueError("serving-offline: opencode_config.provider may only carry "
                          f"the local '{DEFAULT_PROVIDER}' block")
+
+
+def gepa_failure_checks(rows: list[dict], *, suite: str = "micro",
+                        label_prefix: str | None = None,
+                        config_name: str | None = None,
+                        tier: int = GEPA_T2_TIER) -> dict:
+    """Per-named-check failure histogram across the selected runs — the GEPA
+    reflection signal. Surfaces WHICH checks fail (e.g. ``read_offset_near_grep_line``)
+    and on which instances, so the reflector edits the prompt against the real defect
+    rather than a guessed one.
+    """
+    fails: dict[str, int] = {}
+    by_inst: dict[str, dict[str, int]] = {}
+    for r in rows:
+        if r.get("suite") != suite:
+            continue
+        if config_name is not None and r.get("config_name") != config_name:
+            continue
+        if label_prefix is not None and not (r.get("label") or "").startswith(label_prefix):
+            continue
+        for inst in r.get("instances", []):
+            if instance_tier(inst, suite) != tier:
+                continue
+            for c in inst.get("checks", []):
+                if not c.get("passed"):
+                    name = c.get("name", "?")
+                    fails[name] = fails.get(name, 0) + 1
+                    iid = inst.get("id", "?")
+                    by_inst.setdefault(iid, {})[name] = by_inst.setdefault(iid, {}).get(name, 0) + 1
+    ranked = dict(sorted(fails.items(), key=lambda kv: (-kv[1], kv[0])))
+    return {"check_failures": ranked, "by_instance": by_inst}
+
+
+def _gepa_mean_floor(stats: dict) -> float:
+    fc = stats.get("floor_counts") or []
+    return sum(fc) / len(fc) if fc else 0.0
+
+
+def gepa_compare(rows: list[dict], *, cand_prefix: str,
+                 base_prefix: str = "gepa-gate-", suite: str = "micro") -> dict:
+    """Fitness of a candidate repeat set vs the baseline repeat set: the T1 hard
+    gate + the ``score = T2_frac − λ·floor_rise`` scalar, plus whether the T2 gain
+    clears the K-run spread (the adopt criterion). Pure ledger aggregation.
+    """
+    base = gepa_krun_stats(rows, suite=suite, label_prefix=base_prefix)
+    cand = gepa_krun_stats(rows, suite=suite, label_prefix=cand_prefix)
+    base_t1 = gepa_krun_stats(rows, suite=suite, label_prefix=base_prefix, tier=GEPA_T1_TIER)
+    cand_t1 = gepa_krun_stats(rows, suite=suite, label_prefix=cand_prefix, tier=GEPA_T1_TIER)
+    if cand["mean"] is None or base["mean"] is None:
+        return {"error": "missing T2 data", "baseline": base, "candidate": cand}
+    base_t1_frac = base_t1["mean"] if base_t1["mean"] is not None else 1.0
+    cand_t1_frac = cand_t1["mean"] if cand_t1["mean"] is not None else 1.0
+    fit = gepa_fitness(cand_t2_frac=cand["mean"],
+                       cand_floor_count=_gepa_mean_floor(cand),
+                       base_floor_count=_gepa_mean_floor(base),
+                       cand_t1_frac=cand_t1_frac, base_t1_frac=base_t1_frac)
+    t2_delta = cand["mean"] - base["mean"]
+    spread = max(base["spread"] or 0.0, cand["spread"] or 0.0)
+    base_score = base["mean"] - GEPA_LAMBDA * 0  # baseline floor_rise is 0 by definition
+    return {
+        "baseline": {"k": base["k"], "t2_mean": round(base["mean"], 3),
+                     "t2_spread": round(base["spread"], 3), "t1": round(base_t1_frac, 3),
+                     "floor": round(_gepa_mean_floor(base), 2), "score": round(base_score, 3)},
+        "candidate": {"k": cand["k"], "t2_mean": round(cand["mean"], 3),
+                      "t2_spread": round(cand["spread"], 3), "t1": round(cand_t1_frac, 3),
+                      "floor": round(_gepa_mean_floor(cand), 2)},
+        "fitness": {**fit, "score": (fit["score"] if fit["score"] == float("-inf")
+                                     else round(fit["score"], 3))},
+        "t2_delta": round(t2_delta, 3), "spread": round(spread, 3),
+        "clears_spread": t2_delta > spread,
+        "improved": fit["t1_gate"] == "pass" and fit["score"] > base_score and t2_delta > spread,
+    }
 
 
 def gepa_budget(*, per_rollout_s: float, t2_n: int, k: int,
@@ -2316,6 +2388,32 @@ def cmd_gepa_gate(args: argparse.Namespace) -> int:
     return 0 if gate["unlocked"] else 3
 
 
+def cmd_gepa_score(args: argparse.Namespace) -> int:
+    """item 19.3 — score a GEPA candidate's K-run repeats against the baseline:
+    the T1 hard gate + the T2 fitness scalar + the per-check failure histogram (the
+    reflection signal). Reads the ledger only; the candidate must already be run
+    (`harness_micro.py run --config <cand> --label <cand>-rN`).
+    """
+    rows = load_ledger()
+    cmp = gepa_compare(rows, cand_prefix=args.cand_prefix, base_prefix=args.base_prefix,
+                       suite=args.suite)
+    checks = gepa_failure_checks(rows, suite=args.suite, label_prefix=args.cand_prefix)
+    base_checks = gepa_failure_checks(rows, suite=args.suite, label_prefix=args.base_prefix)
+    report = {"item": "19.3", "comparison": cmp,
+              "candidate_check_failures": checks, "baseline_check_failures": base_checks}
+    print(json.dumps(report, indent=2))
+    if "error" in cmp:
+        print(f"\n19.3 score: {cmp['error']} (run the candidate first)", file=sys.stderr)
+        return 2
+    verdict = ("IMPROVED (clears spread, floor held)" if cmp["improved"]
+               else "no improvement" if cmp["fitness"]["t1_gate"] == "pass"
+               else "REJECTED (T1 hard gate)")
+    print(f"\n19.3 GEPA score [{args.cand_prefix}]: T2 {cmp['baseline']['t2_mean']}→"
+          f"{cmp['candidate']['t2_mean']} (Δ{cmp['t2_delta']:+}, spread {cmp['spread']}) "
+          f"score={cmp['fitness']['score']} → {verdict}", file=sys.stderr)
+    return 0
+
+
 def _t2_total(rows: list[dict], args: argparse.Namespace) -> int:
     """T2 instance count from the most recent matching run (subset size for budget)."""
     for r in reversed(rows):
@@ -2769,6 +2867,41 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     check("19.2 reflector: serving-offline guard allows text levers, rejects "
           "provider/external/model_ref overrides", _offline_ok)
 
+    # 19.3 candidate scoring: a candidate that lifts T2 above the spread with the
+    # floor held + T1 intact is "improved"; the per-check histogram surfaces the
+    # named failing check (the reflection signal).
+    def _micro_run_named(label: str, t2_ok: int, fail_check: str) -> dict:
+        insts = [{"id": "t1", "tier": 1, "failure_category": "ok",
+                  "checks": [{"name": "c", "passed": True}], "wall_s": 70.0}]
+        for i in range(6):
+            okk = i < t2_ok
+            insts.append({"id": f"t2-{i}", "tier": 2,
+                          "failure_category": "ok" if okk else "no-edit",
+                          "checks": [{"name": "order", "passed": True},
+                                     {"name": fail_check, "passed": okk}], "wall_s": 78.0})
+        return {"suite": "micro", "config_name": label.rsplit("-r", 1)[0],
+                "label": label, "instances": insts}
+    base_rows = [_micro_run_named("gepa-base-r1", 4, "read_offset_near_grep_line"),
+                 _micro_run_named("gepa-base-r2", 4, "read_offset_near_grep_line"),
+                 _micro_run_named("gepa-base-r3", 5, "read_offset_near_grep_line")]
+    cand_rows = [_micro_run_named("gepa-c1-r1", 6, "read_offset_near_grep_line"),
+                 _micro_run_named("gepa-c1-r2", 6, "read_offset_near_grep_line"),
+                 _micro_run_named("gepa-c1-r3", 6, "read_offset_near_grep_line")]
+    cmp = gepa_compare(base_rows + cand_rows, cand_prefix="gepa-c1-",
+                       base_prefix="gepa-base-")
+    check("19.3 compare: a T2 lift clearing the spread with floor held ⇒ improved",
+          cmp["improved"] is True and cmp["t2_delta"] > 0 and cmp["clears_spread"] is True)
+    fc = gepa_failure_checks(base_rows, label_prefix="gepa-base-")
+    check("19.3 reflection: per-check histogram surfaces the named failing check",
+          fc["check_failures"].get("read_offset_near_grep_line", 0) > 0
+          and "order" not in fc["check_failures"])
+    # A candidate that regresses the floor (more no-edits) must NOT be 'improved'.
+    regress = [_micro_run_named("gepa-c2-r1", 3, "read_offset_near_grep_line"),
+               _micro_run_named("gepa-c2-r2", 3, "read_offset_near_grep_line")]
+    cmp2 = gepa_compare(base_rows + regress, cand_prefix="gepa-c2-", base_prefix="gepa-base-")
+    check("19.3 compare: a floor-regressing candidate is not improved (score ≤ base)",
+          cmp2["improved"] is False)
+
     print(f"\nselftest: {'OK' if ok else 'FAILURES'}")
     return 0 if ok else 1
 
@@ -2863,6 +2996,17 @@ def main(argv: list[str] | None = None) -> int:
     gg.add_argument("--out", default=None, metavar="GATE.json",
                     help="also persist the gate report to this path")
     gg.set_defaults(func=cmd_gepa_gate)
+
+    gs = sub.add_parser("gepa-score",
+                        help="(item 19.3) score a GEPA candidate's K repeats vs the "
+                             "baseline: T1 hard gate + T2 fitness scalar + per-check "
+                             "failure histogram (the reflection signal)")
+    gs.add_argument("--cand-prefix", required=True,
+                    help="label prefix of the candidate's repeats (e.g. gepa-cand1-)")
+    gs.add_argument("--base-prefix", default="gepa-gate-",
+                    help="label prefix of the baseline repeats (default: gepa-gate-)")
+    gs.add_argument("--suite", default="micro", choices=["swebench", "micro"])
+    gs.set_defaults(func=cmd_gepa_score)
 
     st = sub.add_parser("selftest", help="offline sanity checks (no model needed)")
     st.add_argument("--check-sampling", action="store_true",

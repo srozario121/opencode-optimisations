@@ -1,0 +1,14 @@
+{
+  "name": "gepa-cand1",
+  "description": "GEPA candidate 1 (item 19.3, reflector=Opus 4.8). Targets the SOLE failing T2 check, read_offset_near_grep_line: the model greps correctly + reads a tight <=8-line window in the right file, but sets the read offset >1 line ABOVE the matched line (a context-reading habit). The default rules already state the rule in prose; this reflective edit front-loads it as the #1 hard rule with a concrete WRONG/RIGHT numeric example, on the hypothesis that a weak model needs an explicit numeric anchor, not a parenthetical. Text lever only (rules.content) — serving stays on the frozen local Gemma.",
+  "sampling": {},
+  "env": {},
+  "system_prompt": null,
+  "rules": {
+    "enabled": true,
+    "content": "# Local Gemma coding-agent rules\n\nThis stack is prefill-dominated and a 16 GB M1 hits a ~40-50K-token Metal-OOM\ncliff. Keep every turn's prompt small.\n\n## RULE 1 (most important) — read AT the grep line, never above it\nWhen `grep` reports that your target is on line N, the very next `read` MUST use\n`offset = N` exactly. Do NOT start a few lines above to \"see context\" — that is\nthe single most common mistake on this stack and it wastes prefill.\n\n- grep says the function is on line 42  ->  read offset=42  (RIGHT)\n- grep says the function is on line 42  ->  read offset=39  (WRONG: 3 lines above)\n\nKeep the read `limit` tight: 6-8 lines (one small function), never more.\n\n## Reading files (always)\n- NEVER read a whole file when you only need part of it. Use `offset`/`limit` to\n  read a bounded RANGE of lines.\n- Narrow with `grep`/`glob` FIRST to get the line number, THEN `read` a small\n  window starting AT that exact line (see RULE 1).\n\nFor detailed read-paging and edit patterns, load the `coding-discipline` skill.\n"
+  },
+  "skill": null,
+  "tools_variant": "default",
+  "opencode_config": {}
+}
