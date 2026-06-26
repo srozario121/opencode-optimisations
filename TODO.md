@@ -613,24 +613,36 @@ is now enforced two ways — the −0.25 catastrophic/hard-fail rung *in* the sc
 
 ### Sub-tasks
 
-- [ ] **23.1 Corpus expand + shaped T3 reward + budget sizing + T3 gate-check** (the precondition).
-  - [ ] **Expand the T3 tier to ~6.** Mine ~3 more single-file/single-hunk/single-F2P real
-        fixes OFFLINE from the already-downloaded SWE-bench corpus (same criteria as the
-        original 3); add to `harness_eval_subset.json`. **Re-measure a NEW 6-instance frozen
-        baseline** (K-runs); old 3-instance numbers kept historical. If 3 qualifying offline
-        instances can't be sourced/re-baselined in budget ⇒ fall back to the 3-set + note the
-        coarse-signal caveat.
-  - [ ] **Add the TOTAL shaped per-instance score** over `made_edit`/`pass_to_pass_*`/
-        `fail_to_pass_*`/**`tool_call_rounds`**/`reason` (rungs −0.25 / 0.0 / +0.25 / +0.50 /
-        +1.0 per the table above; timeout does NOT cap a clean P2P-intact edit; `oom`/`error`
-        = −0.25). **`make check`-green selftest covering EVERY terminal → rung** (the totality
-        check, incl. 21614's timeout-with-clean-edit = 0.50 and oom/error = −0.25).
-  - [ ] **Rework `gepa_fitness`**: `score = T3_shaped_mean` (no λ term) with **T1 AND T2 both
-        hard gates** (reject if either drops below baseline). Selftest the two-gate logic.
-  - [ ] **Budget + gate-check.** Measure a T3 rollout median (K=3) → size Phase-2 N + abort
-        ceiling via `gepa_budget` (6 instances). Run the **two-ceiling** gate-check: unlock the
-        climb on **ceiling 0.50**, report **1.0** as the adopt gate. **Gate fails (flat/noise
-        under 0.50) ⇒ stop, record "T3 wall holds under shaping".**
+- [x] **23.1 Corpus expand + shaped T3 reward + budget sizing + T3 gate-check** (the precondition).
+      ✓ **DONE 2026-06-26 — VERDICT: UNLOCKED (Phase-1 probe may run).** Shaped T3 mean
+      **0.153** (K=3, run-means [.208,.125,.125]), spread **0.083**, headroom-to-0.50
+      **0.347 > spread** → climbable. Binary F2P flips **0/6** (the wall holds on the adopt
+      ceiling, as expected). Per-T3-rollout median **256.9 s** → per-candidate (6×K=3)
+      **77 min**, **~2 candidates** fit a 3 h wall. Rung tally over 18 instance-runs:
+      `−0.25×2 · 0.0×6 · 0.25×7 · 0.50×3 · 1.0×0` — a genuine dense gradient. Per-instance
+      modes (the 23.2 seed map): **no-tool-stop** 12481/15346 (0.0), **tool-churn**
+      21627/22714 (0.25), **clean-edit-P2P-intact** 18621 (reliable **0.50** — strongest
+      headroom), 21614 unstable (0.25↔−0.25). Code shipped in `harness_eval.py`
+      (`gepa_t3_shaped_score`/`gepa_t3_shaped_stats`/`gepa_t3_fitness`/`gepa_t3_gate_check`,
+      `gepa-t3-gate` subcommand); `make check` green, selftest covers totality + two-gate +
+      two-ceiling + the swebench `episode_wall_s` timing read.
+  - [x] **Expand the T3 tier to ~6.** ✓ Mined the offline-cached SWE-bench Lite corpus (300
+        rows → 124 single-file/single-hunk/single-F2P candidates); prepared+verified **3 new
+        sympy** fixes (**22714** gold 1/1 F2P 11/11 P2P · **18621** 1/1 15/15 · **15346** 1/1
+        22/22) into a NEW 6-instance T3 set (orig 21614/12481/21627 + new). Old 3-instance
+        numbers kept historical. (Fallback-to-3 not needed — 3 sourced cleanly, same repo.)
+  - [x] **Add the TOTAL shaped per-instance score** ✓ `gepa_t3_shaped_score` — total over
+        `made_edit`/`pass_to_pass_*`/`tool_call_rounds`/`reason`; rungs −0.25/0.0/+0.25/+0.50/
+        +1.0; timeout does NOT cap a clean P2P-intact edit; oom/error = −0.25; an F2P-flip-that-
+        broke-P2P falls to −0.25 (not `passed`). `make check`-green selftest incl. an
+        exhaustive totality sweep (every terminal → a valid rung).
+  - [x] **Rework `gepa_fitness`** → `gepa_t3_fitness`: `score = T3_shaped_mean` (no λ) with
+        **T1 AND T2 both hard gates** (reject −inf if either drops below baseline). Added as a
+        SIBLING of item-19's `gepa_fitness` (not a mutation) so the closed/adopted T2 path +
+        its selftests keep working. Two-gate reject logic selftested.
+  - [x] **Budget + gate-check.** ✓ `gepa-t3-gate` (median 256.9 s → ~2 candidates/3 h via
+        `gepa_budget`); two-ceiling gate **UNLOCKED** on the 0.50 ceiling, 1.0 reported as the
+        separate adopt gate. (Gate did NOT fail — climbable signal confirmed.)
 - [ ] **23.2 Seed the mode-targeted candidates** (a)–(d) as `harness_configs/*.json` (text
       levers only; `gepa_assert_serving_offline` guards each). **(d) ports cand2's terse text
       as an APPEND** to the opencode default (match the micro `rules` append; if the
