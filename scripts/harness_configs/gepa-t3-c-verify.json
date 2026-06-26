@@ -1,0 +1,9 @@
+{
+  "name": "gepa-t3-c-verify",
+  "description": "item 23.2 candidate (c) — verify-against-the-failing-test. Targets the clean-near-miss T3 mode (18621 reliable shaped 0.50, P2P intact; 21614 unstable — edits cleanly but the FIX CONTENT is wrong). The hardest (reasoning), but these instances are already P2P-clean, so only the fix correctness is missing. Terse APPEND rule (rules_append → AGENTS.md) forcing a restate-the-test check before finishing. Text lever only; serving stays on the frozen local Gemma.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null,
+  "rules_append": "# Fixing this bug\n\n- The issue describes a failing test. Before you finish, state in one line what that test expects, then confirm your edit produces exactly that.\n"
+}

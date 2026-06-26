@@ -448,6 +448,14 @@ def apply_levers(checkout: str, cfg: dict, model_ref: str, base_url: str) -> dic
             f.write(cfg["system_prompt"])
         agent = conf.setdefault("agent", {}).setdefault("build", {})
         agent.setdefault("prompt", f"{{file:./{HARNESS_PROMPT_FILE}}}")
+    # APPEND channel (item 23): `rules_append` writes a local AGENTS.md — opencode's
+    # project-rules file, which is APPENDED to the system prompt (not a replacement,
+    # unlike `system_prompt`/agent.prompt above). This replicates item-19 cand2's
+    # `rules.content` append for the full harness, so short rule additions add to the
+    # frontier-tuned default instead of gutting it (the item-18 replace-regression).
+    if cfg.get("rules_append"):
+        with open(os.path.join(checkout, "AGENTS.md"), "w") as f:
+            f.write(cfg["rules_append"])
     with open(os.path.join(checkout, "opencode.json"), "w") as f:
         json.dump(conf, f, indent=2)
     env = dict(os.environ)
@@ -1564,7 +1572,8 @@ def gepa_t3_gate_check(t3_shaped_mean: float | None, spread: float | None) -> di
 # local Gemma. `gepa_assert_serving_offline` enforces that the evaluated config
 # keeps serving offline (the design's "serving-offline assertion").
 GEPA_REFLECTOR_TEXT_KEYS = frozenset({
-    "name", "description", "system_prompt", "opencode_config", "sampling", "env"})
+    "name", "description", "system_prompt", "rules_append", "opencode_config",
+    "sampling", "env"})
 GEPA_REFLECTOR_FORBIDDEN_KEYS = frozenset({
     "external_provider", "model_ref", "base_url"})
 
@@ -3192,6 +3201,25 @@ def cmd_selftest(args: argparse.Namespace) -> int:
                             label_prefix="item23-t3-base-", tier=GEPA_T3_TIER)
     check("23.1 timing: per-T3-rollout wall reads episode_wall_s (swebench suite)",
           t3w["n"] == 2 and abs(t3w["median"] - 400.0) < 1e-6)
+
+    # 23.2 — the APPEND channel: `rules_append` writes a local AGENTS.md (opencode
+    # appends it to the system prompt) and must NOT set the agent `prompt` (which
+    # would REPLACE the tuned default — the item-18 regression). `system_prompt`
+    # keeps its replace semantics.
+    with tempfile.TemporaryDirectory() as td:
+        apply_levers(td, {"name": "ap", "rules_append": "Always edit before finishing."},
+                     f"{DEFAULT_PROVIDER}/m", DEFAULT_BASE_URL)
+        agents_md = os.path.join(td, "AGENTS.md")
+        wrote_agents = (os.path.exists(agents_md)
+                        and "edit before finishing" in open(agents_md).read())
+        with open(os.path.join(td, "opencode.json")) as f:
+            ap_conf = json.load(f)
+        no_replace = "prompt" not in ap_conf.get("agent", {}).get("build", {})
+    check("23.2 rules_append: writes AGENTS.md (append) and does NOT replace the "
+          "agent prompt", wrote_agents and no_replace)
+    check("23.2 rules_append is an allowed reflector text key (serving-offline)",
+          "rules_append" in GEPA_REFLECTOR_TEXT_KEYS)
+    gepa_assert_serving_offline({"name": "c", "rules_append": "be concise"})  # no raise
 
     print(f"\nselftest: {'OK' if ok else 'FAILURES'}")
     return 0 if ok else 1

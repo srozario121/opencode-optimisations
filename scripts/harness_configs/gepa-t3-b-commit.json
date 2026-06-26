@@ -1,0 +1,9 @@
+{
+  "name": "gepa-t3-b-commit",
+  "description": "item 23.2 candidate (b) — commit-to-edit / CAP EXPLORATION. Targets the tool-churn T3 mode (21627, 22714: made_edit=False, >=1 tool round, shaped 0.25 — explores but never commits an edit). Terse APPEND rule (rules_append → AGENTS.md) budgeting search rounds before forcing the edit. Tests whether tool-churn is a budgeting lever. Text lever only; serving stays on the frozen local Gemma.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null,
+  "rules_append": "# Fixing this bug\n\n- After at most 3 `grep`/`read` calls, make your `edit`. Do not keep searching.\n- Once you have located the buggy lines, edit them immediately — finding them is not the goal, fixing them is.\n"
+}

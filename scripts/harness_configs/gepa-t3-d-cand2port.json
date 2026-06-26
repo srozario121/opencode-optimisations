@@ -1,0 +1,9 @@
+{
+  "name": "gepa-t3-d-cand2port",
+  "description": "item 23.2 candidate (d) — TRANSFER the item-19 T2 winner. Ports gepa-cand2's adopted terse rules (T2 0.733→0.917) verbatim as an APPEND (rules_append → AGENTS.md), replicating the micro-suite `rules.content` append so the comparison is apples-to-apples with item 19 (NOT a system_prompt replace). Tests whether 'less is more' / the grep→read-offset discipline transfers from T2 tool-fidelity to T3 real fixes, or whether T3 is a different regime. A fresh measurement (lever-channel port), not a guaranteed carry-over. Text lever only; serving stays on the frozen local Gemma.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null,
+  "rules_append": "# Local Gemma coding-agent rules\n\n- To find code: `grep` for it first to get its line number N.\n- Then `read` that file with `offset = N` and `limit = 8`. Read AT line N.\n- Never read a whole file; never read above the matched line.\n"
+}

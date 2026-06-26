@@ -1,0 +1,9 @@
+{
+  "name": "gepa-t3-a-engage",
+  "description": "item 23.2 candidate (a) — anti-no-tool-stop / ENGAGEMENT. Targets the no-tool-stop T3 mode (12481, 15346: made_edit=False, 0 tool rounds, shaped 0.0 — emits prose and stops). Terse APPEND rule (rules_append → AGENTS.md, adds to the tuned default; NOT a system_prompt replace) forbidding a prose-only turn. Tests whether no-tool-stop is a thin termination lever. Design note: ideally paired with the no-think proxy (MLX_PROXY_NO_THINK=1, which once flipped 12481 to a 15-step edit); Phase-1 runs it with the baseline-identical proxy for a clean A/B, no-think pairing deferred to a Phase-2 mutation. Text lever only; serving stays on the frozen local Gemma.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null,
+  "rules_append": "# Fixing this bug\n\n- Every turn must end with a tool call until your code fix is saved to disk. Never end a turn with only text.\n- Start by `read`ing the source file the issue points at. Do not stop to explain first — act, then explain.\n"
+}
