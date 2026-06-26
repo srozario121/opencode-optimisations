@@ -1477,11 +1477,34 @@ substantive conclusion: **there is no new schema-expressible lever worth A/B-ing
 remaining work is structural.**
 
 The decisive **18.3** step (A/B an emitted runnable config at K≥3 via
-`harness_eval.py run`) re-runs the *local* Gemma stack and needs the MLX server up. The
-first-pass run's `proposed-greedy-toolprotocol` config remains the A/B-ready candidate,
-though the L0–L6-aware rerun predicts a **null** result for it (it recombines levers
-item 16 already rejected). Every proposal stays **[tool-proposed]** until that local
-A/B closes it.
+`harness_eval.py run`) re-runs the *local* Gemma stack and needs the MLX server up.
+
+**18.3 result — verdict REJECT (2026-06-26).** Ran the first-pass
+`proposed-greedy-toolprotocol` config (greedy temp 0.0 + a terse small-model tool-use
+protocol *replacing* the long frontier-tuned system prompt; targets the
+`no-edit`/dropped-output mode) at K=3 (`label item18-ab-greedytool`) on the identical
+frozen 8-instance subset (`b8733c486557`, 600 s cap), vs the `baseline-tier-r1..r3` K=3
+arm. **Pass-rate 0/8 → 0/8** (null, spread 0 — the L0–L6-aware rerun's predicted
+tripwire-on-the-capability-wall null held). **But the histogram regressed in the wrong
+direction and tool-call validity broke**, over K=3 (24 episodes each):
+
+| metric | baseline (default prompt) | proposed (greedy + terse protocol) |
+| --- | --- | --- |
+| `no-edit` | 5 | **18** |
+| `made_edit` | 16/24 | **2/24** |
+| `tests-failed` | 12 | **1** |
+| tool-calls (sum) | 167 | **34** |
+| `dropped_output` | 2 | **9** |
+
+**Replacing** the long tuned system prompt with a terse 4-sentence protocol *suppressed*
+tool use on the weak 4B — it narrates the fix instead of emitting the edit tool-call. The
+18.3 bar (move a tier pass-rate **or** shift the histogram favourably, **with tool-call
+validity not regressed**) fails on the disqualifying clause → **the config is rejected.**
+This refines item 19: *additive* terse `rules.content` helps (T2 0.733→0.917), but
+*gutting* the system prompt for a terse one **hurts** — the long tuned prompt is
+load-bearing tool-use scaffolding. The recommender PIPELINE is validated (18.0 backtest
+3/3); its first emitted lever, like every item-16 mechanical lever, does not move the
+capability wall, and a wrong-direction prompt swap actively regresses the floor.
 
 ### Commands
 

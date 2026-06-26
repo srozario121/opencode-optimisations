@@ -7,8 +7,8 @@ claude-mem memory and the `docs/` research.
 > **History note.** This repo was *extracted* (item 15) from a larger personal
 > toolkit (`admin`), where the original 2,475-line TODO.md (items 1–16) lived.
 > That ledger did not come across — items 1–16 were reconstructed from claude-mem
-> cross-session memory so the numbering stays continuous. Items 1–15, **16, 17, 19,
-> 21, and 22** are recorded here; the open work (items 18, 20) remains in `TODO.md`.
+> cross-session memory so the numbering stays continuous. Items 1–15, **16, 17, 18,
+> 19, 21, and 22** are recorded here; the open work (item 20) remains in `TODO.md`.
 
 ## Done (items 1–15)
 
@@ -33,7 +33,48 @@ claude-mem memory and the `docs/` research.
   ⚠ **Did NOT transfer to the full harness** — see item 16 (in `TODO.md`).
 - **15** — Extracted the opencode stack into this standalone published repo. **= this repo.**
 
-## Done (items 16, 17, 19, 21, 22)
+## Done (items 16, 17, 18, 19, 21, 22)
+
+- **18** — **Improvement-recommender agent — closed 2026-06-26, verdict
+  REJECT-the-emitted-config (pipeline validated, top proposal does not transfer).**
+  A two-layer data-driven recommender: a deterministic Python **evidence layer**
+  (`harness_eval.py recommend` → `build_evidence_digest`) aggregates the on-disk
+  episode/ledger corpus by `failure_category` × tier (instance IDs, E0 metric
+  signatures, degenerate-loop signal); a **Claude Code agent on Opus 4.8** is the
+  **proposer**, consuming that digest + prior-work docs and emitting **ranked
+  recommendations**, each materialised as a runnable `harness_configs/*.json` (or a
+  flagged `needs-implementation` note). No Jaeger dependency — the durable jsonl corpus
+  is the source.
+  - **18.0 known-answer backtest — PASS (the pipeline gate).** Over **3 Opus-4.8
+    samples** on the baseline pre-fix digest, the proposer scored **recall = 1.0,
+    precision = 1.0 on all 3** vs the 7-mode taxonomy (`RECOMMENDER_GROUND_TRUTH` /
+    `score_backtest`): it surfaced the known item-16 defects on their instances
+    (dropped-output/thinking-stop on 12481/11400/19007, edit gutter/whitespace on
+    15345/13043, the 19007 loop) **without over-flagging**. Recommender certified.
+  - **18.1/18.2 shipped + schema-gated.** Layer 1 (`build_evidence_digest`,
+    `ranked_cells` by `count × headroom × movable`, T3/T4 zeroed) and Layer 2 (proposer
+    spec `scripts/recommender_proposer_prompt.md`; `validate_proposal` rejects a
+    malformed/non-schema config before it can be A/B'd). `make check` green; selftest
+    +11 item-18 checks.
+  - **18.3 close-the-loop A/B — verdict REJECT.** The top emitted runnable config
+    (`proposed-greedy-toolprotocol`, hash `8cad8a43df03` — greedy temp 0.0 + a terse
+    small-model tool-use protocol replacing the long tuned system prompt; targets the
+    `no-edit`/dropped-output mode) was A/B'd K=3 vs the baseline-tier K=3 on the identical
+    8-instance subset (`b8733c486557`, 600 s cap). **Pass-rate: 0/8 → 0/8** (null, as the
+    proposer pre-flagged — T3/T4 capability wall). **But the histogram regressed in the
+    wrong direction and tool-call validity broke:** `no-edit` 5→18, `made_edit` 16/24→2/24,
+    tool-calls 167→34, dropped-output 2→9 across K=3. **Replacing** the long frontier-tuned
+    system prompt with a terse protocol **suppressed tool use** on the weak 4B (it narrates
+    instead of editing). The bar (move pass-rate OR shift histogram favourably, *with
+    tool-call validity not regressed*) is failed on the disqualifying clause → **the config
+    is rejected.**
+  - **Decisive finding (refines item 19).** Item 19 found *additive* terse `rules.content`
+    helps (T2 0.733→0.917); item 18 shows *replacing* the whole system prompt with a terse
+    one **hurts** — the long tuned prompt is load-bearing tool-use scaffolding. "Less-is-more"
+    is about *adding less*, NOT *gutting the system prompt*. The recommender pipeline works
+    (backtest 3/3); its first emitted lever, like every item-16 mechanical lever, does not
+    move the capability wall — and a wrong-direction prompt swap actively regresses the floor.
+    Full write-up: `docs/opencode-local.md` (Improvement-recommender section).
 
 - **19** — **Structured prompt-optimisation (GEPA) — closed 2026-06-26, verdict
   ADOPT (modest local win).** With item-16's gate satisfied (the harness is sound,

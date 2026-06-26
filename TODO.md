@@ -1,14 +1,19 @@
 # TODO — opencode-optimisations
 
-The repo's running work-ledger. **Items 18, 20, and 23** are the open work. **Completed
-items 1–15, 16, 17, 19, 21, and 22 now live in `CHANGELOG.md`** (item 19's full ticked
-detail is also kept inline below for reference). Item 16 (the dominant harness
+The repo's running work-ledger. **Items 20 and 23** are the open work. **Completed
+items 1–15, 16, 17, 18, 19, 21, and 22 now live in `CHANGELOG.md`** (items 18 and 19's
+full ticked detail is also kept inline below for reference). Item 16 (the dominant harness
 bottleneck) closed 2026-06-25: the L0–L6 mechanical-lever sweep is complete and the 0/8
 is **capability-bound, not a harness defect**. **Item 19 (GEPA) closed 2026-06-26: ADOPT
 cand2 (terse rules, T2 0.733→0.917) — prompt length is the dominant lever on this weak 4B
-model.** **Item 23 (new) follows item 19: push GEPA up to the next rung, T3 (single-file
-real fixes), via a shaped reward + a longer run** — the 3 T3 instances fail in 3 distinct
-modes (no-tool-stop / tool-churn / near-miss), one of which (21614) is a clean near-miss.
+model.** **Item 18 (recommender) closed 2026-06-26: the two-layer pipeline is validated
+(18.0 backtest 3/3 recall=precision=1.0), but its top emitted config REGRESSED in the
+decisive 18.3 A/B (no-edit 5→18, made_edit 16→2, tool-calls 167→34) → verdict REJECT —
+replacing the long tuned system prompt with a terse one suppresses tool use; refines item
+19's "terse helps" to "adding less helps, gutting the prompt hurts".** **Item 23 (new)
+follows item 19: push GEPA up to the next rung, T3 (single-file real fixes), via a shaped
+reward + a longer run** — the 3 T3 instances fail in 3 distinct modes (no-tool-stop /
+tool-churn / near-miss), one of which (21614) is a clean near-miss.
 
 > **Fixed constraints (carry-through from items 8–11, non-negotiable for every
 > open item below).** Fully local / offline at serve time; **16 GB M1**
@@ -33,7 +38,14 @@ modes (no-tool-stop / tool-churn / near-miss), one of which (21614) is a clean n
 
 ## Open
 
-### 18. Improvement-recommender agent  ▲ (was drafted as "13")
+### 18. Improvement-recommender agent  ✅ CLOSED 2026-06-26 → `CHANGELOG.md`  (was drafted as "13")
+
+> **CLOSED — verdict REJECT-the-emitted-config (pipeline validated).** The two-layer
+> recommender is built and certified (18.0 backtest 3/3 recall=precision=1.0), but its
+> top emitted config (`proposed-greedy-toolprotocol`) REGRESSED in the decisive 18.3
+> local A/B: pass-rate 0/8→0/8, but `no-edit` 5→18, `made_edit` 16→2, tool-calls 167→34
+> (K=3) — replacing the long tuned system prompt with a terse one suppresses tool use.
+> Full detail kept below (ticked) + recorded in `CHANGELOG.md`.
 
 **Goal.** A data-driven recommender with a **two-layer split**: a deterministic
 Python **evidence layer** reads the **already-captured local episode corpus**
@@ -166,17 +178,25 @@ build/validation decisions were **user-confirmed 2026-06-24**.
       with the item-16/19 "T3/T4 is a capability wall" finding. The agent's emitted
       configs are **schema-validated** before they count (reuse the `apply_levers` /
       config-load path) so a malformed LLM output is rejected, not silently A/B'd.
-- [ ] **18.3 Close the loop (the decisive validation)** — **PLUMBING READY, local A/B
-      PENDING (needs `make mlx-up`).** The top emitted runnable config is materialised and
-      load/schema-validated (`scripts/harness_configs/proposed-greedy-toolprotocol.json`,
-      hash `8cad8a43df03`), so the run is one command:
-      `harness_eval.py run --config proposed-greedy-toolprotocol --repeats 3` → `report`.
-      This is the **only** item-18 step that re-runs the *local* Gemma/MLX stack (hours at
-      8–12 tok/s), so it is left for an explicit serve-time run. Each proposal stays
-      **[tool-proposed]** until this local A/B closes it. (NB: the proposer itself flagged
-      this candidate as likely a tripwire-only effect on the T3/T4 capability wall —
-      consistent with item-16's sweep — so a *null* result here would still be a valid
-      closed outcome.)
+- [x] **18.3 Close the loop (the decisive validation)** — **DONE → VERDICT REJECT
+      (2026-06-26).** Ran `harness_eval.py run --config proposed-greedy-toolprotocol
+      --repeats 3` (label `item18-ab-greedytool`, hash `8cad8a43df03`) on the local
+      Gemma/MLX stack against the identical frozen 8-instance subset (`b8733c486557`,
+      600 s cap), vs the `baseline-tier-r1..r3` K=3 arm. **Pass-rate 0/8 → 0/8** (null,
+      spread 0 — exactly the tripwire-on-the-T3/T4-capability-wall null the proposer
+      pre-flagged). **But the histogram regressed in the WRONG direction and tool-call
+      validity broke:** over K=3, `no-edit` 5→**18**, `made_edit` 16/24→**2/24**,
+      tool-calls 167→**34**, dropped-output 2→**9**, `tests-failed` 12→**1**. **Replacing**
+      the long frontier-tuned system prompt with a terse 4-sentence protocol (+ greedy temp
+      0.0) **suppressed tool use** on the weak 4B — it narrates instead of editing. The bar
+      (move pass-rate OR shift histogram favourably, **with tool-call validity not
+      regressed**) fails on the disqualifying clause → **config REJECTED.** Refines item
+      19: *additive* terse rules help (T2 0.733→0.917), but *gutting* the system prompt for
+      a terse one hurts — the long tuned prompt is load-bearing tool-use scaffolding.
+      The recommender PIPELINE is validated (18.0 backtest 3/3); its first emitted lever,
+      like every item-16 mechanical lever, does not move the capability wall — and a
+      wrong-direction prompt swap actively regresses the floor. (Closed per Evidence
+      policy: a local A/B closes the [tool-proposed] candidate; the verdict is REJECT.)
 - [x] **18.0 (validation prereq) Known-answer backtest — RECALL *and* PRECISION.** —
       **DONE → PASS (2026-06-25).** Ground truth `RECOMMENDER_GROUND_TRUTH` tags each known
       item-16 defect to its instance(s): dropped-output/thinking-stop → `no-edit` on
@@ -226,9 +246,11 @@ build/validation decisions were **user-confirmed 2026-06-24**.
       `instance_tier` and the `movable`-zeroed T3/T4 priority hint.
 - [x] **Update** `docs/jaeger-tracing.md` — **DONE.** Added a callout that Jaeger is a
       live human-debugging aid and the recommender uses the durable jsonl corpus instead.
-- [ ] **Update** `CHANGELOG.md` only when item 18 reaches a closed outcome — **PENDING
-      18.3** (the local A/B). Layer 1 + the proposer (18.0 certified) are shipped; the
-      CHANGELOG entry lands when the decisive A/B closes the first proposal.
+- [x] **Update** `CHANGELOG.md` — **DONE (2026-06-26).** Item 18 closed entry recorded under
+      *Done (items 16, 17, 18, 19, 21, 22)*: the two-layer pipeline + the 18.0 backtest 3/3
+      PASS + the **18.3 REJECT** verdict (config regressed: no-edit 5→18, made_edit 16→2,
+      tool-calls 167→34) and the item-19 refinement ("adding less helps, gutting the prompt
+      hurts").
 
 ### 19. Structured prompt-optimisation (GEPA)  ✅ CLOSED 2026-06-26 → `CHANGELOG.md`
 
@@ -490,40 +512,80 @@ modes** (per-instance over the baseline K-run repeats):
 (it edits without regressing P2P; only the F2P content is wrong), which is the strongest
 evidence there is *some* headroom. The first two are **behavioural** (engagement/
 termination — exactly the family GEPA moved on T2); the third is **reasoning** (hardest).
+*(These 3 are the historical baseline; 23.1 expands the T3 tier to ~6 and re-baselines for a
+finer shaped gradient — see Design decisions.)*
 
 ### The core enabler — a SHAPED T3 reward (precondition, mirrors the 19.2 gate-check)
 
 Binary T3 = 0/3 gives GEPA nothing to climb. **23.1 must first build a dense per-instance
 reward** that scores the progression the modes above expose, so the optimiser sees a
-gradient:
+gradient. It is a **TOTAL function** over every terminal (every `reason` × E0-metric
+combination maps to exactly one rung — full table in 23.1), keyed off `made_edit`,
+`pass_to_pass_*`, `fail_to_pass_*`, **`tool_call_rounds`**, and `reason`:
 
-> `no-tool-stop (0) < tool-churn / explored-no-edit (0.25) < edited-but-regressed-P2P
-> (0.10, *penalised* — catastrophic) < edited, P2P intact, F2P fail (0.50) < F2P flips
-> (1.0)`
+> `catastrophic-edit / hard-fail (oom|error) (−0.25) < no-tool-stop (0.0) <
+> tool-churn / explored-no-edit (+0.25) < edited, P2P intact, F2P fail (+0.50) <
+> F2P flips (+1.0)`
 
-The **λ floor still binds** (a P2P regression / catastrophic-edit can never score above an
-honest no-edit), and the **binary F2P-flip stays the ultimate adopt gate** — the shaped
-reward is *only* the GEPA climbing signal, never the success criterion.
+Rung predicates (resolved plan-review 2026-06-26):
+> - **−0.25** — an edit that REGRESSED P2P (catastrophic), OR a hard-failure terminal
+>   (`oom`/`error`): strictly *below* honest non-engagement, so "break working code / crash"
+>   can never out-score "don't start". **This replaces item-19's separate λ penalty** — the
+>   penalty is now baked into the per-instance score, not an aggregate term.
+> - **0.0** — no-tool-stop: `made_edit=False AND tool_call_rounds == 0` (emits prose / drops
+>   output and stops without acting).
+> - **+0.25** — tool-churn / explored-no-edit: `made_edit=False AND tool_call_rounds >= 1`
+>   (engaged tools but never committed an edit). `tool_call_rounds` is the discriminator that
+>   separates this rung from no-tool-stop — both are `no-edit` in the item-17 taxonomy.
+> - **+0.50** — `made_edit=True AND P2P intact AND F2P fail`. **Timeout does NOT cap this
+>   rung** — a clean, P2P-intact edit that also hit the wall-clock cap (21614's signature)
+>   still scores 0.50; the edit is what matters.
+> - **+1.0** — F2P flips (real fix).
 
-### Design decisions (to resolve in 23.1 before the run)
+The **binary F2P-flip stays the ultimate adopt gate** — the shaped reward is *only* the GEPA
+climbing signal, never the success criterion. (The old "λ floor" wording is retired: the floor
+is now enforced two ways — the −0.25 catastrophic/hard-fail rung *in* the score, and the
+**T1+T2 hard gates** in the fitness, below.)
 
-- **Fitness** → `score = T3_shaped_mean − λ·(rise in catastrophic-edit + error)`, T1/T2 a
-  **hard gate** (a T3-targeted lever must not regress the T2 win or the tool-call floor;
-  reuse `gepa_fitness`/`gepa_assert_serving_offline` from item 19). Reuse the cheap
-  ledger read; the shaped score is a new per-instance function over the existing E0
-  metrics (`made_edit`, `pass_to_pass_*`, `fail_to_pass_*`, `reason`).
-- **Gate-check (does T3 have a climbable shaped gradient?)** → re-measure the shaped T3
-  mean at K≥3 and apply the **19.2 unlock rule** (`(ceiling − mean) > K-run spread`). If
-  the shaped signal is flat/noise-dominated ⇒ **gated**, record "T3 wall holds even under
+### Design decisions (resolved — plan-review 2026-06-26)
+
+- **Fitness** → `score = T3_shaped_mean` — the shaped mean is the **only** climbing term;
+  **no aggregate λ penalty** (retired; the catastrophic/hard-fail penalty is the −0.25 rung
+  baked into the per-instance score). **T1 AND T2 are BOTH HARD GATES**: a candidate that
+  drops T1 *or* T2 below baseline is **rejected outright** (not soft-penalised) — a T3-
+  targeted lever must never erode the adopted T2 0.917 win or the tool-call floor. This
+  **reworks `gepa_fitness`** (item 19's `T2_frac − λ·floor_rise` → `T3_shaped_mean` + a
+  second hard gate); `gepa_assert_serving_offline` is reused as-is. The cheap ledger read is
+  reused; the shaped score is a NEW total per-instance function over `made_edit`,
+  `pass_to_pass_*`, `fail_to_pass_*`, **`tool_call_rounds`**, `reason`.
+- **Gate-check — TWO ceilings.** Re-measure the shaped T3 mean at K≥3 and apply the **19.2
+  unlock rule** `(ceiling − mean) > K-run spread` with **ceiling = 0.50** — the *behavioural*
+  ceiling ("every instance edits with P2P intact"), the most a *text lever* can realistically
+  reach, since the F2P-flip is capability-bound. **Unlock the climb on 0.50**; keep **ceiling
+  = 1.0 (binary F2P flip) as the SEPARATE adopt gate**. Report both. If the shaped signal is
+  flat/noise-dominated under the 0.50 ceiling ⇒ **gated**, record "T3 wall holds even under
   shaping" (a closed negative). 21614's intermittent edit+P2P-intact and 12481's `nothink`
   engagement suggest the mean is non-zero with real variance → plausibly climbable.
-- **Reflector / optimisee / serving** → identical to 19.3 (Opus 4.8 in-loop reflector;
-  frozen local Gemma optimisee+evaluator; serving offline; text levers only).
-- **Budget (this is the "longer run").** T3 rollouts are ~**8–12× more expensive than T2**:
-  a real fix runs to the ~600 s cap vs T2's ~78 s. Per candidate = `~600 s × 3 instances ×
-  K=3` ≈ **90 min**; a longer N≈8–12 run ≈ **12–18 h of awake compute** → must be
-  **chunked across sessions** (laptop suspends), with the 19.2 abort-ceiling + CAPO/OPRO
-  fallback. Size it precisely in 23.1 from a measured T3 rollout median (reuse `gepa_budget`).
+- **T3 corpus — expand to ~6.** The 3 on-disk T3 instances give a mean over only 3 discrete
+  rungs → too coarse a gradient. **Mine ~3 MORE single-file/single-hunk/single-F2P real fixes
+  OFFLINE** from the already-downloaded SWE-bench corpus (same selection criteria) into a
+  **NEW 6-instance item-23 frozen baseline** (re-measure baseline K-runs on all 6). The old
+  3-instance T3 numbers (items 17/19) stay **historical** — not comparable to the new 6-set.
+  This is a 23.1 prerequisite; **if 3 qualifying offline instances can't be sourced +
+  re-baselined in budget, fall back to the 3-set and note the coarse-signal caveat.**
+- **Reflector / optimisee / serving** → identical to 19.3 (Opus 4.8 in-loop reflector; frozen
+  local Gemma optimisee+evaluator; serving offline; text levers only;
+  `gepa_assert_serving_offline` guards every candidate).
+- **Budget — TWO-PHASE go/no-go.** T3 rollouts are ~**8–12× more expensive than T2** (a real
+  fix runs to the ~600 s cap vs T2's ~78 s). **Phase 1 = a cheap N≈3 probe** gated by the
+  23.1 shaped gate-check; **only unlock the longer N≈8–12 run (Phase 2) if the probe clears
+  spread on the 0.50 ceiling.** Per candidate ≈ `~600 s × 6 instances × K=3` ≈ **3 h** → a
+  full Phase-2 run is many hours, so it is **chunked across sessions, resuming at candidate
+  boundaries** (each candidate's K rollouts complete in one session; a mid-candidate suspend
+  discards that candidate's partial rollouts; persisted state = the JSONL ledger + saved
+  candidate configs + a small frontier/tried file the reflector reloads). Size precisely in
+  23.1 from a measured T3 rollout median (reuse `gepa_budget`); keep the abort-ceiling +
+  CAPO/OPRO fallback.
 
 ### Scenarios to try (the candidate hypotheses — each a text-lever-only edit, mode-matched)
 
@@ -537,40 +599,75 @@ reward is *only* the GEPA climbing signal, never the success criterion.
 - **(c) Verify-against-the-failing-test** *(targets 21614, the near-miss)* — "before
   finishing, restate what the failing test asserts and confirm your edit produces that."
   The hardest (reasoning), but 21614 is already P2P-clean — only the fix content is wrong.
-- **(d) Transfer the T2 winner** — seed with item 19's adopted **`gepa-cand2`** terse
-  rules: does "less is more" transfer from T2 tool-fidelity to T3 real fixes, or is T3 a
-  different regime? Cheap to test (config already exists) and a clean transfer datapoint.
+- **(d) Transfer the T2 winner** — seed with item 19's adopted **`gepa-cand2`** terse rules:
+  does "less is more" transfer from T2 tool-fidelity to T3 real fixes, or is T3 a different
+  regime? **Note (resolved): cand2's text is a `rules.content` lever that ONLY the micro suite
+  reads; the full harness has no `rules` channel — it applies `system_prompt` → `AGENTS.md`.**
+  Port cand2's terse text into a new `harness_configs/*.json` so it **APPENDS** to the opencode
+  default (replicate the micro `rules` append, so the comparison is apples-to-apples with item
+  19 — NOT a `system_prompt` REPLACE; if the `system_prompt`→`AGENTS.md` path replaces rather
+  than appends, 23.2 must add an append channel). A clean transfer datapoint, but the lever-
+  channel port makes it a fresh measurement, not a guaranteed carry-over.
 - **GEPA then evolves these** via the shaped reward — the seeds are reflector starting
   points, not the final answer; the longer N lets it combine/mutate them.
 
 ### Sub-tasks
 
-- [ ] **23.1 Shaped T3 reward + budget sizing + T3 gate-check.** Add the dense per-instance
-      T3 score (over existing E0 metrics) + its `make check`-green selftest; measure a T3
-      rollout median (K=3) → size N + abort ceiling via `gepa_budget`; run the 19.2 unlock
-      rule on the shaped signal. **Gate fails ⇒ stop, record "T3 wall holds under shaping".**
-- [ ] **23.2 Seed the mode-targeted candidates** (a)–(d) above as `harness_configs/*.json`
-      (text levers only; `gepa_assert_serving_offline` guards each).
-- [ ] **23.3 The longer GEPA run** — Opus-4.8 in-loop reflector over the shaped T3 fitness,
-      N≈8–12 × K=3, **chunked across sessions**, abort→CAPO/OPRO fallback. Track best by the
-      shaped score **and** any binary F2P flip.
+- [ ] **23.1 Corpus expand + shaped T3 reward + budget sizing + T3 gate-check** (the precondition).
+  - [ ] **Expand the T3 tier to ~6.** Mine ~3 more single-file/single-hunk/single-F2P real
+        fixes OFFLINE from the already-downloaded SWE-bench corpus (same criteria as the
+        original 3); add to `harness_eval_subset.json`. **Re-measure a NEW 6-instance frozen
+        baseline** (K-runs); old 3-instance numbers kept historical. If 3 qualifying offline
+        instances can't be sourced/re-baselined in budget ⇒ fall back to the 3-set + note the
+        coarse-signal caveat.
+  - [ ] **Add the TOTAL shaped per-instance score** over `made_edit`/`pass_to_pass_*`/
+        `fail_to_pass_*`/**`tool_call_rounds`**/`reason` (rungs −0.25 / 0.0 / +0.25 / +0.50 /
+        +1.0 per the table above; timeout does NOT cap a clean P2P-intact edit; `oom`/`error`
+        = −0.25). **`make check`-green selftest covering EVERY terminal → rung** (the totality
+        check, incl. 21614's timeout-with-clean-edit = 0.50 and oom/error = −0.25).
+  - [ ] **Rework `gepa_fitness`**: `score = T3_shaped_mean` (no λ term) with **T1 AND T2 both
+        hard gates** (reject if either drops below baseline). Selftest the two-gate logic.
+  - [ ] **Budget + gate-check.** Measure a T3 rollout median (K=3) → size Phase-2 N + abort
+        ceiling via `gepa_budget` (6 instances). Run the **two-ceiling** gate-check: unlock the
+        climb on **ceiling 0.50**, report **1.0** as the adopt gate. **Gate fails (flat/noise
+        under 0.50) ⇒ stop, record "T3 wall holds under shaping".**
+- [ ] **23.2 Seed the mode-targeted candidates** (a)–(d) as `harness_configs/*.json` (text
+      levers only; `gepa_assert_serving_offline` guards each). **(d) ports cand2's terse text
+      as an APPEND** to the opencode default (match the micro `rules` append; if the
+      `system_prompt`→`AGENTS.md` path replaces rather than appends, add an append channel here).
+- [ ] **23.3 The GEPA run — TWO-PHASE go/no-go.**
+  - [ ] **Phase 1 — cheap N≈3 probe** over the shaped T3 fitness (Opus-4.8 in-loop reflector).
+        **Only unlock Phase 2 if the probe clears spread on the 0.50 ceiling**; else close
+        (negative, wall holds).
+  - [ ] **Phase 2 — the longer run** N≈8–12 × K=3, **chunked across sessions, resume at
+        candidate boundaries** (each candidate's K rollouts finish in one session; persisted
+        state = JSONL ledger + saved candidate configs + a frontier/tried file; mid-candidate
+        suspend discards that candidate's partials). Abort→CAPO/OPRO fallback. Track best by
+        the shaped score **and** any binary F2P flip.
 - [ ] **23.4 Counter-arm + verdict.** Counter-arm = a fixed candidate vs baseline K≥3 on the
-      shaped signal. **Valid outcomes (all closed):** (i) **a real F2P flip** on ≥1 T3
-      instance (breaks the 0/8 wall — major); (ii) **shaped-signal moves but no binary
-      flip** (partial — records which mode is prompt-movable, e.g. engagement yes / fix-
-      content no); (iii) **no movement even on the shaped signal** (the capability wall
-      holds at T3, now validated under shaping, not assumed). Offline re-validate any adopt.
-- [ ] **`make check` green** + selftests for the shaped reward + the T3 gate logic.
+      shaped signal. **Valid outcomes (all closed):** (i) **a real F2P flip** on ≥1 T3 instance
+      (breaks the 0/8 wall — major; the 1.0 adopt gate); (ii) **shaped-signal moves but no
+      binary flip** (partial — a shaped-mean gain clearing the K-run spread with T1+T2 hard
+      gates + P2P held; records which mode is prompt-movable, e.g. engagement yes / fix-content
+      no); (iii) **no movement even on the shaped signal** (the capability wall holds at T3,
+      now validated under shaping, not assumed). Offline re-validate any adopt.
+- [ ] **`make check` green** + selftests for the shaped reward (totality), the two-gate
+      fitness, and the two-ceiling gate logic.
 
 ### Measurement plan (item 23)
 
-- **Climbing signal:** shaped T3 mean (K≥3) with the 19.2 unlock rule; **adopt gate:** a
-  binary F2P flip (or, for a partial outcome, a shaped-mean gain that clears the K-run
-  spread with T1/T2 + P2P floor held). **Primary caveat to honour:** never let a P2P-
-  regressing edit count as progress (catastrophic-edit stays penalised).
-- **Per-arm metrics:** shaped score, binary F2P pass/3, made-edit rate, P2P-intact rate,
-  the per-mode breakdown (no-tool-stop / tool-churn / near-miss), wall-clock per rollout.
-- **Frozen baseline** kept throughout; **T4 explicitly out of scope** (multi-file, harder).
+- **Climbing signal:** shaped T3 mean (K≥3) with the 19.2 unlock rule at **ceiling 0.50** (the
+  prompt-reachable behavioural ceiling). **Adopt gate (separate, ceiling 1.0):** a binary F2P
+  flip — or, for a partial outcome, a shaped-mean gain that clears the K-run spread with **T1
+  AND T2 hard gates held** + P2P intact. **Primary caveat:** never let a P2P-regressing edit
+  (or an `oom`/`error` crash) count as progress — both sit at the **−0.25 rung**, strictly
+  below honest non-engagement.
+- **Per-arm metrics:** shaped score, binary F2P pass/6, made-edit rate, P2P-intact rate,
+  `tool_call_rounds` (the no-tool-stop vs tool-churn discriminator), the per-mode breakdown
+  (no-tool-stop / tool-churn / near-miss), wall-clock per rollout.
+- **Frozen baseline = the NEW 6-instance T3 set** (re-measured in 23.1), kept throughout the
+  run; the old 3-instance T3 numbers are historical. **T4 explicitly out of scope** (multi-
+  file, harder).
 
 ### Documentation (item 23)
 
