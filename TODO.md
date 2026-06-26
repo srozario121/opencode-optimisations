@@ -1,11 +1,12 @@
 # TODO — opencode-optimisations
 
-The repo's running work-ledger. Items **18–20** are the open work from the
-2026-06-22 planning session. **Completed
-items 1–15, 16, 17, 21, and 22 now live in `CHANGELOG.md`.** Item 16 (the dominant
-harness bottleneck) closed 2026-06-25: the L0–L6 mechanical-lever sweep is complete
-and the 0/8 is **capability-bound, not a harness defect** — so prompt/skill work
-(item 19) is now unblocked.
+The repo's running work-ledger. **Items 18 and 20** are the remaining open work from
+the 2026-06-22 planning session. **Completed items 1–15, 16, 17, 19, 21, and 22 now
+live in `CHANGELOG.md`** (item 19's full ticked detail is also kept inline below for
+reference). Item 16 (the dominant harness bottleneck) closed 2026-06-25: the L0–L6
+mechanical-lever sweep is complete and the 0/8 is **capability-bound, not a harness
+defect**. **Item 19 (GEPA) closed 2026-06-26: ADOPT cand2 (terse rules, T2
+0.733→0.917) — prompt length is the dominant lever on this weak 4B model.**
 
 > **Fixed constraints (carry-through from items 8–11, non-negotiable for every
 > open item below).** Fully local / offline at serve time; **16 GB M1**
@@ -227,13 +228,18 @@ build/validation decisions were **user-confirmed 2026-06-24**.
       18.3** (the local A/B). Layer 1 + the proposer (18.0 certified) are shipped; the
       CHANGELOG entry lands when the decisive A/B closes the first proposal.
 
-### 19. Structured prompt-optimisation (GEPA)  ← deep-research item (was drafted as "14")
+### 19. Structured prompt-optimisation (GEPA)  ✅ CLOSED 2026-06-26 → `CHANGELOG.md`
+
+> **CLOSED — verdict ADOPT (modest local win).** GEPA's cand2 (terse, positive-only
+> rules) lifts **T2 0.733→0.917** (K=6); cand1 (verbose) regressed to 0.278 → **prompt
+> LENGTH is the dominant lever on this weak 4B model**. Full detail kept below (ticked)
+> + recorded in `CHANGELOG.md` and `docs/structured-optimisation-research.md` §19.2–19.3.
 
 **Goal.** Apply a structured optimiser to the harness's text levers (system/agent
-prompts, tool descriptions, skill docs). **Item-16 gate is now SATISFIED** (closed
-2026-06-25, `CHANGELOG.md`): the L0–L6 lever sweep is complete and item 22's online
-control proved the harness sound, so the full harness gives a non-degenerate signal
-and the 0/8 is capability-bound — prompt/skill optimisation is unblocked.
+prompts, tool descriptions, skill docs). **Item-16 gate SATISFIED** (closed
+2026-06-25): the L0–L6 lever sweep is complete and item 22's online control proved the
+harness sound, so the full harness gives a non-degenerate signal and the 0/8 is
+capability-bound. **19.2 gate UNLOCKED** (K=5 T2 climbable) → **19.3 ran → ADOPT cand2.**
 
 > **✅ PRECONDITION MET (both of 2 done, 2026-06-26) — 19.3 is UNBLOCKED.**
 > Blocker **(1)** — item-16 **L5** adopt/reject verdict — **MET** (L5 `doom_loop`
@@ -343,43 +349,51 @@ and the 0/8 is capability-bound — prompt/skill optimisation is unblocked.
         read.** ✓ `gepa_tier_cell`/`gepa_krun_stats` are pure ledger aggregation (no model,
         no re-run); `score = T2_frac − λ·penalty` (λ=100) + T1 hard gate compute correctly
         from it (demonstrated on the live K=5 data + 11 selftests).
-- [ ] **19.3 Prototype GEPA** against the item-17 harness as fitness function — **gate
-      ticks PASSED (2026-06-26) → cleared to run.** The fitness/budget/serving-offline
-      machinery is already shipped by 19.2; 19.3 adds the candidate-generation +
-      reflector loop on top of it. Implements the resolved design:
+- [x] **19.3 Prototype GEPA** — ✓ **DONE 2026-06-26 — VERDICT: ADOPT (modest local win).**
+      Reflector=Opus 4.8 (in-loop, item-18 pattern); optimisee+evaluator=frozen local
+      Gemma; serving offline throughout. Converged in **2 candidates**, well inside budget.
+      **Result: cand2 (terse positive-only rules, 233 ch) lifts T2 0.733→0.917 (K=6,
+      Δ+0.183 > spread 0.167; floor 1.6→0.5; T1 held).** cand1 (verbose +numeric example,
+      1025 ch) REGRESSED to 0.278 → **prompt LENGTH is the dominant lever on this weak 4B
+      model: terseness helps, elaboration hurts.** Refines item-16's "prompt changes don't
+      move this harness" (they do — in the less-is-more direction). Full write-up:
+      `docs/structured-optimisation-research.md` §19.3. Adopted config:
+      `scripts/harness_micro_configs/gepa-cand2.json`.
   - [x] Fitness = **`T2_frac − λ·(rise in no-edit+error+catastrophic-edit)`** with **λ
-        large** (any floor regression ⇒ negative vs baseline) and the **T1 hard gate**
-        (reject on T1 drop); T3/T4 reported, weight 0. Keep the **frozen baseline**.
-        ✓ shipped in 19.2 (`gepa_fitness`, λ=100, selftested) — reused as-is by 19.3.
-  - [ ] **Cloud-reflector-only** loop (serving offline), **T2-only budget**
-        (`≤N × K=3`, abort at the 19.2 wall-clock ceiling → CAPO/OPRO fallback).
-  - [ ] **Counter-arm:** a **single fixed GEPA candidate vs frozen baseline, K≥3** —
-        record whether prompt/skill optimisation moves T2 at all (validates item-16's
-        negative claim instead of assuming it).
-  - [ ] **Offline re-validation before adopt:** rerun the adopted candidate
-        **reflector-disconnected, fully offline**; adopt iff T2 stays within the K-run
-        spread of the online score AND the floor holds.
-  - [ ] **Fallback:** CAPO/OPRO via `promptolution` (offline-native) on **abort only**,
-        same T2 scalar + λ floor + K≥3.
-  - [ ] **Valid outcomes (all closed, per Evidence policy):** adopt a candidate; OR
-        "GEPA/CAPO does not move T2 here" (negative validated locally); OR "infeasible
-        at this tok/s under the budget". Any not-yet-run conclusion stays **[lit-only]**.
-  - [ ] **`make check` (ruff + mypy + pytest) green** for any harness/optimiser code
-        added; selftests cover the fitness scalar + λ penalty + T1-gate logic.
+        large** + **T1 hard gate**; T3/T4 weight 0. ✓ shipped in 19.2 (`gepa_fitness`,
+        λ=100, selftested) — reused as-is by 19.3.
+  - [x] **Reflector loop (serving offline), T2 budget.** ✓ Opus-4.8 in-loop reflector
+        (diagnose traces → propose `rules.content` edit); `gepa_assert_serving_offline`
+        guards every candidate; eval is local-Gemma-only. N=2 candidates × K=3 (+ K=3
+        re-val), inside the 19.2 ceiling → **no CAPO/OPRO fallback needed.**
+  - [x] **Counter-arm:** ✓ **cand1** is the fixed-candidate-vs-baseline arm — a naive
+        reflective prompt edit (more guidance) **regressed** T2 0.733→0.278, consistently
+        (1/6,2/6,2/6, well beyond spread). Validates item-16's negative claim under a
+        controlled run, *then refines it*: the wrong-direction edit hurts; the
+        right-direction (terser) edit (cand2) helps.
+  - [x] **Offline re-validation before adopt:** ✓ cand2 re-run independently K=3
+        (reflector never in eval path): online K=3=1.0, **re-val K=3=0.833**, combined
+        **K=6=0.917**. Win survives (re-val within one spread of online, stays above
+        baseline, floor held) → **adopt**. (Honest effect ≈ T2 0.92, not a clean 1.0.)
+  - [x] **Fallback:** not triggered (converged inside budget; `promptolution` unused).
+  - [x] **Valid outcome (closed, per Evidence policy):** **adopt a candidate** (cand2);
+        the [lit-only] GEPA verdict is now replaced by a measured local result.
+  - [x] **`make check` (ruff + mypy + pytest) green** ✓ + selftest **66/66** (covers the
+        fitness scalar + λ penalty + T1-gate + gate unlock + compare/reflection logic).
 
 ### Documentation (item 19)
 
-- [x] **Update** `docs/structured-optimisation-research.md` — **DONE (19.2 part).** Added
-      §19.2 with the resolved fitness scalar (T2-only, λ=100 floor, T1 hard gate),
-      cloud-reflector-loop-only serving-offline guard, the measured **K=5 gate verdict
-      (UNLOCKED)**, and the timing/budget. *(The 19.3 run result that replaces the
-      remaining **[lit-only]** GEPA verdict still pending 19.3.)*
-- [ ] **Update** `docs/tiered-harness.md` — document `tier-report.jsonl` used as the
-      GEPA fitness read and the `score = T2_frac − λ·penalty` + T1-hard-gate definition.
-- [ ] **Update** `docs/opencode-local.md` (master doc) — record item 19's adopt/reject/
-      infeasible outcome as a lever result once 19.3 closes.
-- [ ] **Update** `CHANGELOG.md` only when item 19 reaches a closed outcome (mirrors the
-      item-17/21 pattern).
+- [x] **Update** `docs/structured-optimisation-research.md` — **DONE.** §19.2 (fitness
+      scalar, λ=100 floor, T1 hard gate, serving-offline guard, K=5 gate verdict UNLOCKED,
+      timing/budget) **and** §19.3 (the measured GEPA run: cand1 regressed, cand2 ADOPTED
+      T2 0.733→0.917, counter-arm + offline re-validation) — replaces the **[lit-only]**
+      GEPA verdict with a local measurement.
+- [x] **Update** `docs/tiered-harness.md` — **DONE.** Documented `tier-report.jsonl` as the
+      GEPA fitness read + the `score = T2_frac − λ·penalty` + T1-hard-gate definition.
+- [x] **Update** `docs/opencode-local.md` (master doc) — **DONE.** Recorded item 19's
+      ADOPT outcome (cand2 terse rules) as a lever result.
+- [x] **Update** `CHANGELOG.md` — **DONE.** Item 19 closed entry (gate UNLOCKED + GEPA
+      ADOPT cand2), mirroring the item-17/21 pattern.
 
 ### 20. Planning-first phase / orchestration topology  ← deep-research item
 

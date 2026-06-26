@@ -7,8 +7,8 @@ claude-mem memory and the `docs/` research.
 > **History note.** This repo was *extracted* (item 15) from a larger personal
 > toolkit (`admin`), where the original 2,475-line TODO.md (items 1–16) lived.
 > That ledger did not come across — items 1–16 were reconstructed from claude-mem
-> cross-session memory so the numbering stays continuous. Items 1–15, **16, 17, 21,
-> and 22** are recorded here; the open work (items 18, 19, 20) remains in `TODO.md`.
+> cross-session memory so the numbering stays continuous. Items 1–15, **16, 17, 19,
+> 21, and 22** are recorded here; the open work (items 18, 20) remains in `TODO.md`.
 
 ## Done (items 1–15)
 
@@ -33,7 +33,32 @@ claude-mem memory and the `docs/` research.
   ⚠ **Did NOT transfer to the full harness** — see item 16 (in `TODO.md`).
 - **15** — Extracted the opencode stack into this standalone published repo. **= this repo.**
 
-## Done (items 16, 17, 21, 22)
+## Done (items 16, 17, 19, 21, 22)
+
+- **19** — **Structured prompt-optimisation (GEPA) — closed 2026-06-26, verdict
+  ADOPT (modest local win).** With item-16's gate satisfied (the harness is sound,
+  the 0/8 is capability-bound), applied a reflective optimiser to the harness text
+  levers, with **Opus 4.8 as the in-loop reflector** (item-18 pattern) and the frozen
+  local Gemma as optimisee + evaluator (serving offline throughout, guarded by
+  `gepa_assert_serving_offline`).
+  - **19.2 feasibility gate — UNLOCKED.** Shipped the deterministic fitness/gate core in
+    `harness_eval.py` (`gepa_fitness` = `T2_frac − λ·floor_rise`, λ=100, T1 hard gate;
+    `gepa_gate_check`; cheap pure-ledger reads; `gepa_budget`; `gepa-gate`/`gepa-score`
+    subcommands + `make gepa-gate`). A fresh **K=5** baseline re-measure gave T2 mean
+    **0.733**, spread 0.167 → headroom 0.267 > spread → **gate UNLOCKED** (climbable
+    signal). Per-rollout 78.5 s; per-candidate ≈23.6 min (K=3).
+  - **19.3 GEPA run — ADOPT cand2.** Reflection target = the sole failing T2 check
+    (`read_offset_near_grep_line`: model reads >1 line above the grep hit). **cand2**
+    (terse, positive-only `rules.content`, 233 ch) lifts **T2 0.733→0.917** (K=6,
+    Δ+0.183 > spread; floor 1.6→0.5; T1 held); **cand1** (verbose +numeric example,
+    1025 ch) **REGRESSED to 0.278** — the counter-arm. **Decisive finding: prompt
+    LENGTH is the dominant lever on this weak 4B model — terseness helps, elaboration
+    hurts.** Refines item-16's "prompt changes don't move this harness" (they do, in the
+    less-is-more direction). Converged in 2 candidates, no CAPO/OPRO fallback. Offline
+    re-validation confirmed the win survives (online K3=1.0, re-val K3=0.833, K6=0.917).
+    Adopted: `scripts/harness_micro_configs/gepa-cand2.json`. Caveat: win is on the
+    synthetic T2 tool-fidelity rung; **T3/T4 stay 0/8** (capability wall, unmovable by a
+    prompt lever). Full write-up: `docs/structured-optimisation-research.md` §19.2–19.3.
 
 - **16** — **Full-harness trace-driven fixes (round 2) — mechanical-lever sweep
   COMPLETE.** The full harness scored **0/8** on the frozen 8-instance sympy subset

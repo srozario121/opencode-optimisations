@@ -1498,6 +1498,46 @@ python scripts/harness_eval.py recommend --backtest sample1.json sample2.json sa
 python scripts/harness_eval.py run --config proposed-greedy-toolprotocol --repeats 3
 ```
 
+## Structured prompt-optimisation — GEPA (TODO item 19)
+
+**Closed 2026-06-26 — verdict ADOPT (modest local win).** With item-16's gate
+satisfied (harness sound, 0/8 capability-bound), a reflective optimiser was applied to
+the harness **text levers** (the `mlx-gemma-rules.md` content), with **Opus 4.8 as the
+in-loop reflector** (item-18 pattern) and the **frozen local Gemma as optimisee +
+evaluator** — serving stays offline throughout (`gepa_assert_serving_offline` rejects any
+candidate that would move the evaluated model off the local stack).
+
+**19.2 feasibility gate (UNLOCKED).** A deterministic fitness/gate core
+(`gepa_fitness` = `T2_frac − λ·floor_rise`, λ=100, T1 hard gate; `gepa_gate_check`;
+cheap pure-ledger reads; `gepa_budget`) decides whether GEPA may run. A fresh **K=5**
+baseline re-measure gave **T2 mean 0.733, spread 0.167**, so headroom 0.267 > spread →
+**gate UNLOCKED** (a real, above-noise climbable signal on the synthetic T2 rung).
+Per-rollout ≈78.5 s; per-candidate ≈23.6 min (K=3). `make gepa-gate`.
+
+**19.3 GEPA run (ADOPT cand2).** The sole failing T2 check was
+`read_offset_near_grep_line` — the model greps correctly but reads >1 line *above* the
+matched line, even though the default rules already state the rule in prose.
+- **cand2** (terse, positive-only rules, 233 ch) → **T2 0.733→0.917** (K=6, Δ+0.183 >
+  spread; floor 1.6→0.5; T1 held). **ADOPTED** (`scripts/harness_micro_configs/gepa-cand2.json`).
+- **cand1** (verbose, +WRONG/RIGHT numeric example, 1025 ch) → **REGRESSED to 0.278**
+  (the counter-arm).
+- **Decisive finding:** on this weak 4B model **prompt LENGTH is the dominant lever** —
+  terseness helps, elaboration hurts. This *refines* item-16's "prompt changes don't
+  move this harness": they do, but only in the less-is-more direction. The search
+  converged in 2 candidates (no CAPO/OPRO fallback). Offline re-validation confirmed the
+  win survives (online K3=1.0, re-val K3=0.833, combined K6=0.917).
+- **Caveat:** the win is on the synthetic T2 tool-fidelity rung; **T3/T4 stay 0/8** (the
+  capability wall — unmovable by a prompt lever). Full write-up:
+  `docs/structured-optimisation-research.md` §19.2–19.3.
+
+```bash
+# (gate) decide whether GEPA may run — offline, reads the ledger
+python scripts/harness_eval.py gepa-gate
+# evaluate a candidate (NEEDS the local MLX stack — make mlx-up), then score it:
+make harness-micro CONFIG=gepa-cand2 MICRO_ARGS="--label gepa-cand2-r1"
+python scripts/harness_eval.py gepa-score --cand-prefix gepa-cand2-
+```
+
 ## Troubleshooting
 
 - **OOM / memory pressure on 16 GB** — stick to E4B (or drop to E2B). Close

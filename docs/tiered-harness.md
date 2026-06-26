@@ -98,6 +98,19 @@ is built at the **reporting layer** — no merge of the two run engines.
   **cheap — pure aggregation over the ledger** — so item 19's GEPA loop can read it
   as a fitness signal without re-running anything.
 
+### Used as the GEPA fitness signal (item 19)
+
+Item 19's optimiser reads exactly this cheap aggregation as its fitness function
+(`gepa_tier_cell` / `gepa_krun_stats` over the ledger, no re-run). The scalar is
+**`score = T2_frac − λ·(rise above baseline in no-edit + error + catastrophic-edit)`**
+with **λ large** (any tool-call-floor regression drives the score negative — a T2 gain
+can never buy it back) and a **T1 hard gate** (any T1 drop ⇒ rejected outright). **T2 is
+the only climbable rung**; T3/T4 are reported but weight 0 (the stable 0/8 capability
+wall has no gradient). The unlock rule that decides whether GEPA may run at all is
+`(ceiling − T2_mean) > K-run spread` (`gepa_gate_check`). Item 19 used this to ADOPT a
+terse-rules candidate (T2 0.733→0.917); see `docs/structured-optimisation-research.md`
+§19.2–19.3 and `harness_eval.py gepa-gate` / `gepa-score`.
+
 ### Commands
 
 ```bash

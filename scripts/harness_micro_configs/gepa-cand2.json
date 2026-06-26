@@ -1,0 +1,14 @@
+{
+  "name": "gepa-cand2",
+  "description": "GEPA candidate 2 — *** ADOPTED (item 19.3 winner, 2026-06-26) ***. A MINIMAL, positive-only rules file (233 chars vs the 720-char default), no negative example, no OOM preamble. Lifts T2 0.733->0.917 (K=6, Δ+0.183 clears the 0.167 spread; floor 1.6->0.5; T1 held 1.0). Cand1 (verbose +WRONG/RIGHT example, 1025 chars) REGRESSED to 0.278 — so on this weak 4B model prompt LENGTH is the dominant lever: terseness helps, elaboration hurts. Reflector=Opus 4.8 (in-loop, never in serve path). Text lever only (rules.content); serving stays on the frozen local Gemma.",
+  "sampling": {},
+  "env": {},
+  "system_prompt": null,
+  "rules": {
+    "enabled": true,
+    "content": "# Local Gemma coding-agent rules\n\n- To find code: `grep` for it first to get its line number N.\n- Then `read` that file with `offset = N` and `limit = 8`. Read AT line N.\n- Never read a whole file; never read above the matched line.\n"
+  },
+  "skill": null,
+  "tools_variant": "default",
+  "opencode_config": {}
+}

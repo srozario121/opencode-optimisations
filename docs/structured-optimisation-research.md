@@ -230,3 +230,58 @@ Fresh micro-baseline re-measure (`harness_eval.py gepa-gate`):
   **~4 h of awake compute** at K=3. Wall-clock-feasible but **budget is the binding
   constraint** — 19.3 must run small-N with **abort → CAPO/OPRO fallback** if
   unconverged, exactly as designed. (`gepa_budget`, `make gepa-gate`.)
+
+---
+
+## 19.3 — GEPA prototype run + verdict (measured, 2026-06-26)
+
+**Reflector = Opus 4.8 (item-18 pattern), in the optimisation loop only**; optimisee +
+evaluator = the frozen local Gemma; serving offline throughout (`gepa_assert_serving_offline`
+guards every candidate). Fitness = the shipped 19.2 scalar. This **replaces the [lit-only]
+GEPA verdict with a measured one on this exact stack.**
+
+### Reflection target (from the K=5 baseline traces)
+
+The **sole** failing T2 check across all 5 baseline runs is **`read_offset_near_grep_line`**
+(`gepa_failure_checks`): the model greps correctly, reads a tight ≤8-line window in the
+right file, but sets the `read` **offset >1 line ABOVE the matched line** (a context-reading
+habit). Notably the default `mlx-gemma-rules.md` **already states the correct rule in prose**
+("read with offset set to THAT exact line… do not start several lines above it") — so this is
+a clean test of item-16's "prompt changes don't move this harness" claim.
+
+### Candidates (each a text-lever-only `rules.content` edit, K=3 on T2)
+
+| candidate | rules size | T2 mean | Δ vs base | outcome |
+|---|---|---|---|---|
+| baseline (`micro-baseline`) | ~720 ch | 0.733 (K=5) | — | — |
+| **cand1** — front-load rule as "RULE 1" + WRONG/RIGHT numeric example | 1025 ch | **0.278** | **−0.456** | **REGRESSED** |
+| **cand2** — minimal, positive-only, no preamble/no negative example | **233 ch** | **0.917** (K=6) | **+0.183** | **ADOPTED** |
+
+- **cand1 regressed hard and consistently** (1/6, 2/6, 2/6 — far beyond the 0.167 spread),
+  spreading the `read_offset` failure from 2 instances to all 5. The verbose, example-laden
+  edit made the weak 4B model *worse* — likely extra prefill + imitation of the shown-WRONG
+  `offset=39` example. This is the **counter-arm**: a naive reflective prompt edit does **not**
+  help here (validates item-16's negative claim under a controlled run, not just trace-review).
+- **cand2 improved and clears the spread.** Online K=3 was a slightly lucky 1.0 (6/6×3);
+  the **offline re-validation** K=3 came in at 0.833 (5/6×3); **combined K=6 = 0.917**
+  (Δ +0.183 > spread 0.167), floor 1.6→0.5, T1 held 1.0. The win **survives re-validation**
+  (re-val 0.833 is within one spread of the online 1.0 and stays above baseline 0.733) and
+  is behaviourally genuine (the `read_offset_near_grep_line` check now passes — the model
+  reads AT the grep line). Adopted config: `scripts/harness_micro_configs/gepa-cand2.json`.
+
+### Verdict (closed, per Evidence policy — replaces [lit-only])
+
+**GEPA produces a real but MODEST local win on this stack: ADOPT cand2** (terse rules,
+T2 0.733→0.917). The decisive, design-changing finding is that **prompt LENGTH is the
+dominant lever for this weak 4B optimisee** — terseness helps (+0.18), elaboration hurts
+(−0.46). This **refines** item-16's "prompt changes don't move this harness": they *do*
+move T2, but only in the less-is-more direction; a naive "add more guidance" edit regresses.
+The search **converged in 2 candidates** (cand2 hit the ceiling on its first batch), well
+inside the 19.2 budget — no CAPO/OPRO fallback needed.
+
+**Caveats.** (1) The win is on the synthetic **T2** tool-fidelity rung; **T3/T4 stay 0/8**
+(the capability wall — a prompt lever can't move it). (2) The terse rules are well-matched to
+the grep→read T2 tasks; treat as tuned for tool-call fidelity, not a universal prompt. (3) The
+first-K3 1.0 was optimistic; the honest effect is **T2 ≈ 0.92 (range 0.83–1.0)**, not a clean
+ceiling. Re-run after any micro-suite change. Commands: `harness_eval.py gepa-score
+--cand-prefix gepa-cand2`, `make harness-micro CONFIG=gepa-cand2`.
