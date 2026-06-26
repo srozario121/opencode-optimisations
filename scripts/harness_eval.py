@@ -2564,6 +2564,47 @@ def cmd_gepa_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gepa_t3_gate(args: argparse.Namespace) -> int:
+    """item 23.1 — the SHAPED T3 feasibility gate (the precondition, mirrors 19.2).
+    Re-reads the ledger (cheap, no model), aggregates the baseline's K-run shaped
+    T3 mean/spread, applies the unlock rule with TWO ceilings (climb on 0.50, report
+    the 1.0 binary-F2P-flip adopt gate), and sizes the Phase-2 budget from the
+    measured per-T3-rollout wall-clock. Verdict: UNLOCKED ⇒ the Phase-1 probe may
+    run; GATED ⇒ "T3 wall holds under shaping" (a closed negative, Evidence policy).
+    """
+    rows = load_ledger()
+    stats = gepa_t3_shaped_stats(rows, suite=args.suite, label_prefix=args.label_prefix,
+                                 config_name=args.config_name)
+    gate = gepa_t3_gate_check(stats["mean"], stats["spread"])
+    timing = gepa_rollout_wall(rows, suite=args.suite, label_prefix=args.label_prefix,
+                               config_name=args.config_name, tier=GEPA_T3_TIER)
+    per_rollout = args.per_rollout_s or (timing["median"] or 0.0)
+    t3_n = stats["n_per_run"][0] if stats["n_per_run"] else 0
+    budget = gepa_budget(per_rollout_s=per_rollout, t2_n=t3_n,
+                         k=max(3, stats["k"] or 3), wall_budget_s=args.wall_budget_s)
+    total_flips = sum(stats["flips"]) if stats["flips"] else 0
+    report = {
+        "item": "23.1", "suite": args.suite,
+        "selection": {"label_prefix": args.label_prefix, "config_name": args.config_name},
+        "t3_shaped": stats, "gate": gate, "timing": timing, "budget": budget,
+        "binary_f2p_flips": total_flips, "rungs": stats["rung_tally"],
+    }
+    print(json.dumps(report, indent=2))
+    mean = stats["mean"]
+    verdict = ("UNLOCKED (Phase-1 probe may run)" if gate["unlocked"]
+               else "GATED (T3 wall holds under shaping)")
+    print(f"\n23.1 shaped-T3 gate: K={stats['k']} T3_shaped_mean="
+          f"{mean if mean is None else round(mean, 3)} "
+          f"spread={gate['climb']['spread']} headroom(→0.50)={gate['climb']['headroom']} "
+          f"flips={total_flips} per-rollout={timing['median']}s → {verdict}\n  "
+          f"{gate['climb']['reason']}", file=sys.stderr)
+    if args.out:
+        with open(args.out, "w") as f:
+            json.dump(report, f, indent=2)
+        print(f"gate report -> {args.out}", file=sys.stderr)
+    return 0 if gate["unlocked"] else 3
+
+
 def _t2_total(rows: list[dict], args: argparse.Namespace) -> int:
     """T2 instance count from the most recent matching run (subset size for budget)."""
     for r in reversed(rows):
@@ -3241,6 +3282,25 @@ def main(argv: list[str] | None = None) -> int:
                     help="label prefix of the baseline repeats (default: gepa-gate-)")
     gs.add_argument("--suite", default="micro", choices=["swebench", "micro"])
     gs.set_defaults(func=cmd_gepa_score)
+
+    g3 = sub.add_parser("gepa-t3-gate",
+                        help="(item 23.1) shaped-T3 feasibility gate: aggregate the "
+                             "baseline K-run shaped T3 mean/spread from the ledger, "
+                             "apply the unlock rule with two ceilings (climb on 0.50, "
+                             "report the 1.0 F2P-flip adopt gate), size the budget")
+    g3.add_argument("--label-prefix", default="item23-t3-base-",
+                    help="select the baseline repeats by label prefix "
+                         "(default: item23-t3-base-)")
+    g3.add_argument("--config-name", default=None,
+                    help="config_name of the baseline repeats (default: any)")
+    g3.add_argument("--suite", default="swebench", choices=["swebench", "micro"])
+    g3.add_argument("--per-rollout-s", type=float, default=None,
+                    help="override per-T3-rollout wall-clock (default: ledger median)")
+    g3.add_argument("--wall-budget-s", type=float, default=10800.0,
+                    help="wall-clock ceiling the budget must fit (default 10800s/3h)")
+    g3.add_argument("--out", default=None, metavar="GATE.json",
+                    help="also persist the gate report to this path")
+    g3.set_defaults(func=cmd_gepa_t3_gate)
 
     st = sub.add_parser("selftest", help="offline sanity checks (no model needed)")
     st.add_argument("--check-sampling", action="store_true",
