@@ -111,6 +111,19 @@ wall has no gradient). The unlock rule that decides whether GEPA may run at all 
 terse-rules candidate (T2 0.733→0.917); see `docs/structured-optimisation-research.md`
 §19.2–19.3 and `harness_eval.py gepa-gate` / `gepa-score`.
 
+### The shaped T3 climbing signal (item 23)
+
+The binary tier pass is too coarse for the **real-code T3 rung** — it sits at a flat 0/6, so
+there is no gradient for GEPA to climb. Item 23 adds a **shaped, dense per-instance reward**
+(`gepa_t3_shaped_score`) that scores the engage → commit-to-edit → clean-edit progression the
+T3 failure modes expose: `−0.25` catastrophic/hard-fail · `0.0` no-tool-stop · `+0.25`
+tool-churn · `+0.50` clean edit (P2P intact) · `+1.0` F2P flip. This is the GEPA *climbing*
+signal for T3; the **binary F2P flip stays the adopt gate**. Fitness (`gepa_t3_fitness`) =
+`T3_shaped_mean` with **T1 AND T2 both hard gates**, and the gate-check (`gepa-t3-gate`) uses
+**two ceilings** — unlock the climb on **0.50** (the behavioural, prompt-reachable ceiling),
+report **1.0** as the separate adopt gate. The 23.1 re-baseline UNLOCKED it (shaped mean 0.153,
+headroom 0.347 > spread 0.083); see `docs/structured-optimisation-research.md` §23.1.
+
 ### Commands
 
 ```bash

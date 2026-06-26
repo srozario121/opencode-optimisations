@@ -285,3 +285,52 @@ the grep→read T2 tasks; treat as tuned for tool-call fidelity, not a universal
 first-K3 1.0 was optimistic; the honest effect is **T2 ≈ 0.92 (range 0.83–1.0)**, not a clean
 ceiling. Re-run after any micro-suite change. Commands: `harness_eval.py gepa-score
 --cand-prefix gepa-cand2`, `make harness-micro CONFIG=gepa-cand2`.
+
+## 23.1 — GEPA on the next rung (T3 real fixes): shaped reward + gate (measured, 2026-06-26)
+
+Item 19 moved the synthetic **T2** rung; item 23 pushes GEPA up to **T3** (single-file,
+single-hunk, single-F2P **real** SWE-bench fixes). Binary T3 is a flat **0/6** — no gradient —
+so the precondition (mirroring the 19.2 gate-check) is a **shaped, dense reward** the optimiser
+can climb, plus a re-baselined 6-instance T3 set.
+
+### The shaped T3 reward (total per-instance function, shipped)
+
+`gepa_t3_shaped_score` maps **every** terminal (`reason` × E0 metrics) to exactly one rung —
+it **replaces item-19's separate λ floor penalty**: the catastrophic/hard-fail floor is now the
+−0.25 rung baked **into** the score, so "break working code / crash" can never out-score
+"don't start".
+
+| rung | predicate | mode |
+|---|---|---|
+| **−0.25** | edit REGRESSED P2P, OR `oom`/`error` terminal | catastrophic / hard-fail |
+| **0.0** | `made_edit=False AND tool_call_rounds == 0` | no-tool-stop |
+| **+0.25** | `made_edit=False AND tool_call_rounds >= 1` | tool-churn / explored-no-edit |
+| **+0.50** | `made_edit=True AND P2P intact AND F2P fail` (timeout does NOT cap) | clean near-miss |
+| **+1.0** | `passed` (F2P flips AND P2P intact) | real fix |
+
+An F2P-flip-that-broke-P2P is not `passed` → falls to −0.25. Fitness (`gepa_t3_fitness`) =
+`T3_shaped_mean` with **T1 AND T2 both hard gates** (a T3 lever must never erode item-19's
+adopted T2 0.917 or the tool-call floor). Added as a sibling of `gepa_fitness`, not a mutation.
+
+### Corpus + gate verdict (`gepa-t3-gate`, K=3, `item23-t3-base-r1..r3`)
+
+T3 expanded **3 → 6**: mined the offline-cached SWE-bench Lite corpus (124 single-file/
+single-hunk/single-F2P candidates) and verified 3 new sympy fixes (22714/18621/15346, all gold
+flips clean) alongside the original 21614/12481/21627. Re-baseline (baseline config, 600 s cap):
+
+- **Shaped T3 mean 0.153** (run-means [.208, .125, .125]), **spread 0.083**, **headroom-to-0.50
+  0.347 > spread** → **UNLOCKED** (the 19.2 rule on the 0.50 *behavioural* ceiling). Binary
+  **F2P flips 0/6** — the wall holds on the 1.0 *adopt* ceiling, as expected.
+- Rung tally over 18 instance-runs: **−0.25×2 · 0.0×6 · 0.25×7 · 0.50×3 · 1.0×0** — a genuine
+  dense gradient, not a flat floor.
+- **Per-instance modes (the 23.2 seed map):** no-tool-stop = 12481, 15346 (0.0); tool-churn =
+  21627, 22714 (0.25); **clean-edit-P2P-intact = 18621** (reliable **0.50** — the strongest
+  headroom datapoint); 21614 unstable (0.25 ↔ −0.25, churn vs hard-fail).
+- **Budget:** per-T3-rollout median **256.9 s** → per-candidate (6 × K=3) **77 min**, **~2
+  candidates** fit a 3 h wall. Phase 2 is therefore chunked across sessions.
+
+**Read:** the shaped signal is climbable on the behavioural ceiling, so a text lever has
+*somewhere to go* even though the binary F2P flip stays capability-bound. Three distinct,
+prompt-addressable modes (engage / commit-to-edit / verify-the-fix) → the 23.2 candidates are
+mode-matched. Command: `harness_eval.py gepa-t3-gate --label-prefix item23-t3-base- --suite
+swebench`.
