@@ -1,12 +1,14 @@
 # TODO — opencode-optimisations
 
-The repo's running work-ledger. **Items 18 and 20** are the remaining open work from
-the 2026-06-22 planning session. **Completed items 1–15, 16, 17, 19, 21, and 22 now
-live in `CHANGELOG.md`** (item 19's full ticked detail is also kept inline below for
-reference). Item 16 (the dominant harness bottleneck) closed 2026-06-25: the L0–L6
-mechanical-lever sweep is complete and the 0/8 is **capability-bound, not a harness
-defect**. **Item 19 (GEPA) closed 2026-06-26: ADOPT cand2 (terse rules, T2
-0.733→0.917) — prompt length is the dominant lever on this weak 4B model.**
+The repo's running work-ledger. **Items 18, 20, and 23** are the open work. **Completed
+items 1–15, 16, 17, 19, 21, and 22 now live in `CHANGELOG.md`** (item 19's full ticked
+detail is also kept inline below for reference). Item 16 (the dominant harness
+bottleneck) closed 2026-06-25: the L0–L6 mechanical-lever sweep is complete and the 0/8
+is **capability-bound, not a harness defect**. **Item 19 (GEPA) closed 2026-06-26: ADOPT
+cand2 (terse rules, T2 0.733→0.917) — prompt length is the dominant lever on this weak 4B
+model.** **Item 23 (new) follows item 19: push GEPA up to the next rung, T3 (single-file
+real fixes), via a shaped reward + a longer run** — the 3 T3 instances fail in 3 distinct
+modes (no-tool-stop / tool-churn / near-miss), one of which (21614) is a clean near-miss.
 
 > **Fixed constraints (carry-through from items 8–11, non-negotiable for every
 > open item below).** Fully local / offline at serve time; **16 GB M1**
@@ -452,6 +454,131 @@ delegates to subagents (`subagent_type`, background, resume).
       **Decisions this run must settle locally:** does planning-first *lower or raise*
       the loop rate (no source answers this)? is multi-agent actually worse on *this*
       stack, or did the literature mislead? Item-16 gate satisfied (E0 metrics exist).
+
+### 23. GEPA on the next rung — T3 (single-file real fixes) via a shaped reward + longer run  ▲ — follows item 19
+
+**Goal.** Item 19 closed with **ADOPT on T2** (terse rules, T2 0.733→0.917) — the first
+prompt lever that moved a tier on this stack. Push GEPA up to the **next rung, T3**
+(single-file, single-hunk, single-F2P **real** SWE-bench fixes), with a **longer run**
+(bigger N) and an **Opus-4.8 in-loop reflector** (same wiring as 19.3). T3 is the lowest
+real-code rung — if any prompt/skill lever can crack it, this is where it shows.
+
+> **⚖ Tension with item 19's design (acknowledged, deliberately tested).** Item 19's
+> design said *"do NOT attempt a T3/T4 GEPA run until the capability wall moves"* and
+> weighted T3/T4 at 0 because **binary** T3 is a flat **0/3** — no gradient for GEPA to
+> climb (the same reason 19.2 used T2). This item does **not** assume the wall moved; it
+> tests whether a **shaped (dense) reward** exposes a *climbable sub-signal* underneath
+> the flat binary, and whether a longer run can convert it. **A clean "no movement even on
+> the shaped signal" is a valid, wall-confirming outcome** (Evidence policy) — not a
+> failure of the item.
+
+### Failure investigation (measured on the on-disk baseline corpus, 2026-06-26)
+
+The 3 T3 instances are the **easiest real fixes** — each is 1 file · 1 hunk · **1 F2P
+test**, ~8.1K context, expected tool seq just `[read, edit]`, gold flips F2P with P2P
+fully intact. Yet baseline is **0/3**, and crucially **they fail in three DISTINCT
+modes** (per-instance over the baseline K-run repeats):
+
+| T3 instance | F2P | dominant failure | signature | what's missing |
+|---|---|---|---|---|
+| **21614** | `test_Derivative_kind` (6 P2P) | **near-miss / wrong-fix** | **edits cleanly, P2P 6/6 intact, F2P still 0/1**; also times out | the *fix content* is wrong — everything else is right |
+| **12481** | `test_args` (7 P2P) | **no-tool-stop** | 142 tok, **0 tool rounds**, dropped output, never engages (but `nothink` once got it to 15-step edit) | doesn't even start — emits prose and stops |
+| **21627** | `test_Abs` (26 P2P) | **tool-churn** | **8 search/read rounds, never edits**, then no-edit/timeout | explores but won't **commit** to an edit |
+
+**Read:** T3 is not one wall but three different failure modes — *engage* (12481),
+*commit-to-edit* (21627), and *get-the-fix-right* (21614). 21614 is a genuine **near-miss**
+(it edits without regressing P2P; only the F2P content is wrong), which is the strongest
+evidence there is *some* headroom. The first two are **behavioural** (engagement/
+termination — exactly the family GEPA moved on T2); the third is **reasoning** (hardest).
+
+### The core enabler — a SHAPED T3 reward (precondition, mirrors the 19.2 gate-check)
+
+Binary T3 = 0/3 gives GEPA nothing to climb. **23.1 must first build a dense per-instance
+reward** that scores the progression the modes above expose, so the optimiser sees a
+gradient:
+
+> `no-tool-stop (0) < tool-churn / explored-no-edit (0.25) < edited-but-regressed-P2P
+> (0.10, *penalised* — catastrophic) < edited, P2P intact, F2P fail (0.50) < F2P flips
+> (1.0)`
+
+The **λ floor still binds** (a P2P regression / catastrophic-edit can never score above an
+honest no-edit), and the **binary F2P-flip stays the ultimate adopt gate** — the shaped
+reward is *only* the GEPA climbing signal, never the success criterion.
+
+### Design decisions (to resolve in 23.1 before the run)
+
+- **Fitness** → `score = T3_shaped_mean − λ·(rise in catastrophic-edit + error)`, T1/T2 a
+  **hard gate** (a T3-targeted lever must not regress the T2 win or the tool-call floor;
+  reuse `gepa_fitness`/`gepa_assert_serving_offline` from item 19). Reuse the cheap
+  ledger read; the shaped score is a new per-instance function over the existing E0
+  metrics (`made_edit`, `pass_to_pass_*`, `fail_to_pass_*`, `reason`).
+- **Gate-check (does T3 have a climbable shaped gradient?)** → re-measure the shaped T3
+  mean at K≥3 and apply the **19.2 unlock rule** (`(ceiling − mean) > K-run spread`). If
+  the shaped signal is flat/noise-dominated ⇒ **gated**, record "T3 wall holds even under
+  shaping" (a closed negative). 21614's intermittent edit+P2P-intact and 12481's `nothink`
+  engagement suggest the mean is non-zero with real variance → plausibly climbable.
+- **Reflector / optimisee / serving** → identical to 19.3 (Opus 4.8 in-loop reflector;
+  frozen local Gemma optimisee+evaluator; serving offline; text levers only).
+- **Budget (this is the "longer run").** T3 rollouts are ~**8–12× more expensive than T2**:
+  a real fix runs to the ~600 s cap vs T2's ~78 s. Per candidate = `~600 s × 3 instances ×
+  K=3` ≈ **90 min**; a longer N≈8–12 run ≈ **12–18 h of awake compute** → must be
+  **chunked across sessions** (laptop suspends), with the 19.2 abort-ceiling + CAPO/OPRO
+  fallback. Size it precisely in 23.1 from a measured T3 rollout median (reuse `gepa_budget`).
+
+### Scenarios to try (the candidate hypotheses — each a text-lever-only edit, mode-matched)
+
+- **(a) Engagement / anti-no-tool-stop** *(targets 12481)* — a rule forbidding a
+  prose-only turn: "never end a turn with only text until the fix is saved; every turn
+  emits a tool call." Pair with **`nothink`** (already shown to flip 12481 from
+  no-tool-stop → 15-step edit). Tests whether the no-tool-stop is a thin termination lever.
+- **(b) Commit-to-edit / cap exploration** *(targets 21627)* — "once you've located the
+  buggy lines, make the `edit` immediately; do not keep searching. Cap yourself at ~3
+  search/read rounds before editing." Tests whether tool-churn is a budgeting lever.
+- **(c) Verify-against-the-failing-test** *(targets 21614, the near-miss)* — "before
+  finishing, restate what the failing test asserts and confirm your edit produces that."
+  The hardest (reasoning), but 21614 is already P2P-clean — only the fix content is wrong.
+- **(d) Transfer the T2 winner** — seed with item 19's adopted **`gepa-cand2`** terse
+  rules: does "less is more" transfer from T2 tool-fidelity to T3 real fixes, or is T3 a
+  different regime? Cheap to test (config already exists) and a clean transfer datapoint.
+- **GEPA then evolves these** via the shaped reward — the seeds are reflector starting
+  points, not the final answer; the longer N lets it combine/mutate them.
+
+### Sub-tasks
+
+- [ ] **23.1 Shaped T3 reward + budget sizing + T3 gate-check.** Add the dense per-instance
+      T3 score (over existing E0 metrics) + its `make check`-green selftest; measure a T3
+      rollout median (K=3) → size N + abort ceiling via `gepa_budget`; run the 19.2 unlock
+      rule on the shaped signal. **Gate fails ⇒ stop, record "T3 wall holds under shaping".**
+- [ ] **23.2 Seed the mode-targeted candidates** (a)–(d) above as `harness_configs/*.json`
+      (text levers only; `gepa_assert_serving_offline` guards each).
+- [ ] **23.3 The longer GEPA run** — Opus-4.8 in-loop reflector over the shaped T3 fitness,
+      N≈8–12 × K=3, **chunked across sessions**, abort→CAPO/OPRO fallback. Track best by the
+      shaped score **and** any binary F2P flip.
+- [ ] **23.4 Counter-arm + verdict.** Counter-arm = a fixed candidate vs baseline K≥3 on the
+      shaped signal. **Valid outcomes (all closed):** (i) **a real F2P flip** on ≥1 T3
+      instance (breaks the 0/8 wall — major); (ii) **shaped-signal moves but no binary
+      flip** (partial — records which mode is prompt-movable, e.g. engagement yes / fix-
+      content no); (iii) **no movement even on the shaped signal** (the capability wall
+      holds at T3, now validated under shaping, not assumed). Offline re-validate any adopt.
+- [ ] **`make check` green** + selftests for the shaped reward + the T3 gate logic.
+
+### Measurement plan (item 23)
+
+- **Climbing signal:** shaped T3 mean (K≥3) with the 19.2 unlock rule; **adopt gate:** a
+  binary F2P flip (or, for a partial outcome, a shaped-mean gain that clears the K-run
+  spread with T1/T2 + P2P floor held). **Primary caveat to honour:** never let a P2P-
+  regressing edit count as progress (catastrophic-edit stays penalised).
+- **Per-arm metrics:** shaped score, binary F2P pass/3, made-edit rate, P2P-intact rate,
+  the per-mode breakdown (no-tool-stop / tool-churn / near-miss), wall-clock per rollout.
+- **Frozen baseline** kept throughout; **T4 explicitly out of scope** (multi-file, harder).
+
+### Documentation (item 23)
+
+- [ ] **Update** `docs/structured-optimisation-research.md` — append §23 (shaped T3 reward,
+      gate-check, the longer-run result; whether the wall moved).
+- [ ] **Update** `docs/tiered-harness.md` — note the shaped T3 reward as the GEPA climbing
+      signal for the real-code rung (vs the binary tier pass used for adopt).
+- [ ] **Update** `docs/opencode-local.md` + `CHANGELOG.md` only when item 23 closes.
 
 ### 21. Sandboxed code-execution ("code mode") — DONE (see `CHANGELOG.md`)
 
