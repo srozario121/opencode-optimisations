@@ -1407,6 +1407,156 @@ def gepa_fitness(*, cand_t2_frac: float, cand_floor_count: float,
                        else f"floor regressed by {floor_rise} ⇒ score driven negative")}
 
 
+# --------------------------------------------------------------------------- #
+# item 23: GEPA on the next rung — T3 (single-file real fixes) via a SHAPED reward
+# --------------------------------------------------------------------------- #
+# Binary T3 is a flat 0/3 — no gradient for GEPA. The shaped reward is a TOTAL
+# function over every terminal (every `reason` × E0-metric combination maps to
+# exactly one rung), so the optimiser sees the engage → commit-to-edit →
+# get-the-fix-right progression the three T3 failure modes expose. It REPLACES
+# item 19's separate λ floor penalty: the catastrophic/hard-fail floor is now the
+# −0.25 rung baked INTO the per-instance score (a P2P regression or an oom/error
+# crash sits strictly below honest non-engagement, so "break working code / crash"
+# can never out-score "don't start"). The binary F2P flip stays the ultimate adopt
+# gate — the shaped reward is ONLY the climbing signal, never the success criterion.
+GEPA_T3_TIER = 3
+# the *behavioural* ceiling a text lever can realistically reach: every instance
+# edits with P2P intact (rung +0.50). The climb is unlocked against this. The F2P
+# flip (rung +1.0) is capability-bound, so 1.0 is the SEPARATE adopt gate.
+GEPA_T3_SHAPED_CEILING = 0.50
+GEPA_T3_ADOPT_CEILING = 1.0
+
+
+def gepa_t3_shaped_score(inst: dict) -> float:
+    """item 23: the TOTAL shaped per-instance T3 reward. Maps EVERY terminal to
+    exactly one rung — a dense gradient under the flat binary 0/3 wall:
+
+      −0.25  catastrophic edit (REGRESSED P2P) OR a hard-failure terminal (oom/error)
+       0.0   no-tool-stop:  made_edit=False AND tool_call_rounds == 0
+      +0.25  tool-churn / explored-no-edit:  made_edit=False AND tool_call_rounds >= 1
+      +0.50  made_edit=True AND P2P intact AND F2P fail  (timeout does NOT cap this)
+      +1.0   F2P flips (real fix: F2P passes AND P2P intact ⇒ `passed`)
+
+    Precedence (most severe/specific first) keeps it total and non-overlapping,
+    mirroring `_swebench_category`:
+      1. `passed` ⇒ +1.0 (a real fix needs BOTH F2P flip and P2P intact, so an
+         F2P-flip-that-broke-P2P is NOT passed and falls through to catastrophic).
+      2. oom / error terminal ⇒ −0.25 (hard failure, below non-engagement).
+      3. edited but P2P regressed ⇒ −0.25 (catastrophic — broke working code).
+      4. edited, P2P intact, F2P still fails ⇒ +0.50 (timeout does NOT cap it —
+         21614's clean-edit-then-timeout still scores 0.50; the edit is what counts).
+      5. no edit, but engaged ≥1 tool round ⇒ +0.25 (explored, never committed).
+      6. no edit, 0 tool rounds ⇒ 0.0 (no-tool-stop: emits prose / drops output).
+    """
+    if inst.get("passed"):
+        return 1.0
+    reason = inst.get("reason", "") or ""
+    if reason == "oom" or reason.startswith("error"):
+        return -0.25
+    m = inst.get("metrics") or {}
+    made_edit = bool(m.get("made_edit"))
+    p2p_passed = inst.get("pass_to_pass_passed", 0) or 0
+    p2p_total = inst.get("pass_to_pass_total", 0) or 0
+    p2p_intact = p2p_passed >= p2p_total      # (>= covers the p2p_total == 0 case)
+    if made_edit and not p2p_intact:
+        return -0.25                          # catastrophic: edit broke P2P
+    if made_edit:
+        return 0.50                           # clean edit, P2P intact, F2P unflipped
+    rounds = m.get("tool_call_rounds", 0) or 0
+    return 0.25 if rounds >= 1 else 0.0        # tool-churn vs no-tool-stop
+
+
+def gepa_t3_shaped_stats(rows: list[dict], *, suite: str = "swebench",
+                         label_prefix: str | None = None,
+                         config_name: str | None = None) -> dict:
+    """K-run aggregate of the shaped T3 reward: per repeat the mean shaped score
+    over its T3 instances, then mean / spread (max−min) across the K repeats.
+
+    Mirrors `gepa_krun_stats` but the per-run statistic is the shaped MEAN (the
+    climbing signal) rather than the binary pass-fraction. Also reports the binary
+    F2P-flip count per run (the separate adopt gate) and the per-mode rung tally.
+    Pure ledger aggregation — no model, no re-run.
+    """
+    run_means: list[float] = []
+    flips: list[int] = []
+    rung_tally: dict[float, int] = {}
+    n_per_run: list[int] = []
+    for r in rows:
+        if r.get("suite", "swebench") != suite:
+            continue
+        if config_name is not None and r.get("config_name") != config_name:
+            continue
+        if label_prefix is not None and not (r.get("label") or "").startswith(label_prefix):
+            continue
+        scores = []
+        flip = 0
+        for inst in r.get("instances", []):
+            if instance_tier(inst, suite) != GEPA_T3_TIER:
+                continue
+            s = gepa_t3_shaped_score(inst)
+            scores.append(s)
+            rung_tally[s] = rung_tally.get(s, 0) + 1
+            if inst.get("passed"):
+                flip += 1
+        if not scores:
+            continue
+        run_means.append(sum(scores) / len(scores))
+        flips.append(flip)
+        n_per_run.append(len(scores))
+    if not run_means:
+        return {"k": 0, "mean": None, "spread": None, "min": None, "max": None,
+                "run_means": [], "flips": [], "rung_tally": {}, "n_per_run": []}
+    return {
+        "k": len(run_means),
+        "mean": sum(run_means) / len(run_means),
+        "spread": max(run_means) - min(run_means),
+        "min": min(run_means), "max": max(run_means),
+        "run_means": run_means, "flips": flips,
+        "rung_tally": {k: rung_tally[k] for k in sorted(rung_tally)},
+        "n_per_run": n_per_run,
+    }
+
+
+def gepa_t3_fitness(*, cand_t3_shaped: float,
+                    cand_t1_frac: float, base_t1_frac: float,
+                    cand_t2_frac: float, base_t2_frac: float) -> dict:
+    """item 23 fitness: ``score = T3_shaped_mean`` (the ONLY climbing term — no λ
+    aggregate penalty; the floor is the −0.25 rung baked into the shaped score)
+    with T1 AND T2 BOTH HARD GATES. A T3-targeted lever that drops T1 *or* T2
+    below baseline is rejected outright (−inf), never soft-penalised — it must
+    never erode item 19's adopted T2 0.917 win or the tool-call floor.
+
+    (A deliberate sibling of item-19's `gepa_fitness`, NOT a mutation of it:
+    item 19 is closed/adopted and its T2-only `gepa_compare` path + selftests
+    depend on the old scalar, so the T3 rework lands as a new two-gate function.)
+    """
+    if cand_t1_frac < base_t1_frac:
+        return {"score": float("-inf"), "gate": "REJECT-T1",
+                "reason": f"T1 dropped {base_t1_frac:.3f}→{cand_t1_frac:.3f} (hard gate)"}
+    if cand_t2_frac < base_t2_frac:
+        return {"score": float("-inf"), "gate": "REJECT-T2",
+                "reason": f"T2 dropped {base_t2_frac:.3f}→{cand_t2_frac:.3f} (hard gate)"}
+    return {"score": cand_t3_shaped, "gate": "pass",
+            "reason": "T1+T2 gates held; score = T3 shaped mean"}
+
+
+def gepa_t3_gate_check(t3_shaped_mean: float | None, spread: float | None) -> dict:
+    """The 19.2 unlock rule applied with TWO ceilings. Unlock the GEPA climb on the
+    behavioural ceiling 0.50 (`(0.50 − mean) > spread`) — the most a text lever can
+    realistically reach; report the adopt ceiling 1.0 (binary F2P flip) separately.
+    A flat/noise-dominated shaped signal under 0.50 ⇒ gated ("T3 wall holds under
+    shaping"), a closed negative.
+    """
+    climb = gepa_gate_check(t3_shaped_mean, spread, floor=-0.25,
+                            ceiling=GEPA_T3_SHAPED_CEILING)
+    adopt = gepa_gate_check(t3_shaped_mean, spread, floor=-0.25,
+                            ceiling=GEPA_T3_ADOPT_CEILING)
+    return {"unlock_ceiling": GEPA_T3_SHAPED_CEILING,
+            "adopt_ceiling": GEPA_T3_ADOPT_CEILING,
+            "climb": climb, "adopt_report": adopt,
+            "unlocked": climb["unlocked"]}
+
+
 # Keys a GEPA reflector is ALLOWED to write into a candidate config bundle — the
 # text levers only (system prompt → AGENTS.md, tool/skill text via opencode_config,
 # the lever name/description). It may NOT touch the serve path: switching the
@@ -2901,6 +3051,90 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     cmp2 = gepa_compare(base_rows + regress, cand_prefix="gepa-c2-", base_prefix="gepa-base-")
     check("19.3 compare: a floor-regressing candidate is not improved (score ≤ base)",
           cmp2["improved"] is False)
+
+    # 23.1 — shaped T3 reward (the dense gradient under the flat binary 0/3 wall).
+    def _t3(*, passed: bool = False, reason: str = "tests-failed",
+            made_edit: bool = False, rounds: int = 0,
+            p2p_pass: int = 6, p2p_total: int = 6) -> dict:
+        return {"id": "x", "instance_id": "x", "tier": 3, "passed": passed,
+                "reason": reason, "pass_to_pass_passed": p2p_pass,
+                "pass_to_pass_total": p2p_total,
+                "metrics": {"made_edit": made_edit, "tool_call_rounds": rounds}}
+    S = gepa_t3_shaped_score
+    check("23.1 shaped: F2P flip ⇒ +1.0 (real fix)",
+          S(_t3(passed=True)) == 1.0)
+    check("23.1 shaped: no-tool-stop (no edit, 0 rounds) ⇒ 0.0",
+          S(_t3(reason="no-edit", made_edit=False, rounds=0)) == 0.0)
+    check("23.1 shaped: tool-churn (no edit, ≥1 round) ⇒ +0.25",
+          S(_t3(reason="no-edit", made_edit=False, rounds=8)) == 0.25)
+    check("23.1 shaped: clean edit, P2P intact, F2P fail ⇒ +0.50",
+          S(_t3(made_edit=True, p2p_pass=6, p2p_total=6)) == 0.50)
+    check("23.1 shaped: 21614 case — clean edit + TIMEOUT does NOT cap, still +0.50",
+          S(_t3(reason="timeout", made_edit=True, p2p_pass=6, p2p_total=6)) == 0.50)
+    check("23.1 shaped: catastrophic — edit REGRESSED P2P ⇒ −0.25",
+          S(_t3(made_edit=True, p2p_pass=5, p2p_total=6)) == -0.25)
+    check("23.1 shaped: F2P-flip-but-P2P-broke is NOT passed ⇒ catastrophic −0.25",
+          S(_t3(passed=False, made_edit=True, p2p_pass=5, p2p_total=6)) == -0.25)
+    check("23.1 shaped: oom terminal ⇒ −0.25 (below honest non-engagement)",
+          S(_t3(reason="oom")) == -0.25)
+    check("23.1 shaped: error terminal ⇒ −0.25",
+          S(_t3(reason="error:boom")) == -0.25)
+    # Totality: EVERY terminal in the cross-product maps into the allowed rung set.
+    _rungs = {-0.25, 0.0, 0.25, 0.5, 1.0}
+    _total = all(
+        S(_t3(passed=p, reason=rn, made_edit=me, rounds=rd,
+              p2p_pass=pp, p2p_total=6)) in _rungs
+        for p in (True, False)
+        for rn in ("oom", "error:x", "timeout", "no-edit", "tests-failed", "apply-failed")
+        for me in (True, False)
+        for rd in (0, 5)
+        for pp in (6, 4))
+    check("23.1 shaped: TOTAL — every terminal maps to exactly one rung", _total)
+
+    # K-run aggregation: per-run shaped mean, then mean/spread across repeats; the
+    # binary flip count + per-rung tally ride alongside (the separate adopt gate).
+    def _t3_run(label: str, scores: list[dict]) -> dict:
+        return {"suite": "swebench", "config_name": "t3-baseline", "label": label,
+                "instances": scores}
+    # 3 repeats, each over the 3 historical T3 modes (no-tool-stop / tool-churn /
+    # near-miss-clean-edit): per-run mean = (0.0 + 0.25 + 0.50)/3 = 0.25.
+    t3_modes = [_t3(reason="no-edit", made_edit=False, rounds=0),
+                _t3(reason="no-edit", made_edit=False, rounds=8),
+                _t3(reason="timeout", made_edit=True)]
+    t3_rows = [_t3_run("t3-base-r1", t3_modes), _t3_run("t3-base-r2", t3_modes),
+               _t3_run("t3-base-r3", t3_modes)]
+    ts = gepa_t3_shaped_stats(t3_rows, label_prefix="t3-base-")
+    check("23.1 shaped stats: per-run mean over T3 modes (mean 0.25, spread 0, k=3)",
+          abs(ts["mean"] - 0.25) < 1e-9 and ts["spread"] == 0.0 and ts["k"] == 3)
+    check("23.1 shaped stats: rung tally counts each rung across all repeats",
+          ts["rung_tally"].get(0.0) == 3 and ts["rung_tally"].get(0.25) == 3
+          and ts["rung_tally"].get(0.5) == 3 and ts["flips"] == [0, 0, 0])
+
+    # Two-gate fitness: score = shaped mean ONLY when T1 AND T2 both hold; either
+    # dropping below baseline ⇒ hard-gate REJECT (−inf), never soft-penalised.
+    fok = gepa_t3_fitness(cand_t3_shaped=0.40, cand_t1_frac=1.0, base_t1_frac=1.0,
+                          cand_t2_frac=0.917, base_t2_frac=0.917)
+    check("23.1 fitness: T1+T2 held ⇒ score = T3 shaped mean",
+          fok["gate"] == "pass" and abs(fok["score"] - 0.40) < 1e-9)
+    f_t1 = gepa_t3_fitness(cand_t3_shaped=0.50, cand_t1_frac=0.8, base_t1_frac=1.0,
+                           cand_t2_frac=0.917, base_t2_frac=0.917)
+    check("23.1 fitness: T1 drop ⇒ hard-gate REJECT-T1 (−inf)",
+          f_t1["gate"] == "REJECT-T1" and f_t1["score"] == float("-inf"))
+    f_t2 = gepa_t3_fitness(cand_t3_shaped=0.50, cand_t1_frac=1.0, base_t1_frac=1.0,
+                           cand_t2_frac=0.70, base_t2_frac=0.917)
+    check("23.1 fitness: T2 drop (would erode item-19 win) ⇒ hard-gate REJECT-T2",
+          f_t2["gate"] == "REJECT-T2" and f_t2["score"] == float("-inf"))
+
+    # Two-ceiling gate-check: unlock the climb on 0.50, report the 1.0 adopt gate.
+    g_climb = gepa_t3_gate_check(0.30, 0.10)        # headroom to .50 = .20 > .10
+    check("23.1 gate: shaped headroom > spread under 0.50 ceiling ⇒ UNLOCKED",
+          g_climb["unlocked"] is True and g_climb["unlock_ceiling"] == 0.50
+          and g_climb["adopt_ceiling"] == 1.0)
+    g_gate = gepa_t3_gate_check(0.45, 0.10)         # headroom to .50 = .05 < .10
+    check("23.1 gate: shaped headroom ≤ spread ⇒ GATED (T3 wall holds under shaping)",
+          g_gate["unlocked"] is False)
+    check("23.1 gate: shaped mean saturated at 0.50 ceiling ⇒ outside band, GATED",
+          gepa_t3_gate_check(0.50, 0.0)["unlocked"] is False)
 
     print(f"\nselftest: {'OK' if ok else 'FAILURES'}")
     return 0 if ok else 1
