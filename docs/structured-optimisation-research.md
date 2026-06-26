@@ -161,3 +161,72 @@ Haiku 4.5 93.9% → 98.5% on Jinja.) Source: `github.com/gepa-ai/gepa` (3-0 vote
 > gap is the **total absence** of any benchmark on a Gemma-4-E4B-class offline
 > optimisee — so treat the GEPA-first recommendation as **strong on fit, unproven
 > on our exact optimisee**. Prototype small before committing a long benchmark slot.
+
+---
+
+## 19.2 — Feasibility filter (resolved + measured on this stack, 2026-06-26)
+
+Per the Evidence policy this section is **measured, not [lit-only]**: the numbers
+come from a fresh local re-measure on the frozen Gemma-4-E4B / MLX / 16 GB M1 stack.
+
+### Fitness signal + gate logic (deterministic, shipped)
+
+`scripts/harness_eval.py` now carries the GEPA feasibility core (selftested,
+`make check` green, 63/63 selftests):
+
+- **`score = T2_frac − λ·max(0, floor_rise)`** with a **T1 hard gate** — any T1 drop
+  below baseline returns `−inf` (rejected outright, not soft-penalised). `floor_rise`
+  is the net rise above baseline in the **`no-edit + error + catastrophic-edit`**
+  counts (item-17 shared taxonomy). **λ = 100** (large): one floor regression drives
+  the score negative — a T2 gain can never buy back a tool-call regression. T3/T4
+  carry weight 0 (the stable 0/8 wall → no gradient). (`gepa_fitness`.)
+- **Unlock rule** (`gepa_gate_check`): GEPA may run iff `floor < T2_mean < ceiling`
+  **AND `(ceiling − T2_mean) > K-run spread`** — headroom must exceed sampling noise.
+- **Fitness read is cheap**: pure aggregation over the ledger / `tier-report.jsonl`
+  (`gepa_tier_cell`, `gepa_krun_stats`), no model, no re-run — safe as the GEPA
+  inner-loop signal.
+- **Reflector is loop-only** (`gepa_assert_serving_offline`): the *evaluated* config
+  must keep serving on the frozen local Gemma. A reflector-emitted bundle may carry
+  only **text levers** (`system_prompt`→AGENTS.md, tool/skill text via
+  `opencode_config`, `sampling`, `env`); it is rejected if it flips
+  `external_provider`/`model_ref`/`base_url` or smuggles a non-`mlx-local` provider.
+  The reflector itself may be a cloud model — it just never sits in `cmd_run`'s serve
+  path (same shape as item 18's Opus proposer / item 22's online arm).
+
+### Gate-check measurement — baseline T2 at **K=5** (`gepa-gate-r1..r5`)
+
+Fresh micro-baseline re-measure (`harness_eval.py gepa-gate`):
+
+| run | T1 | T2 | T2 frac | floor (no-edit) |
+|---|---|---|---|---|
+| r1 | 4/4 | 4/6 | 0.667 | 2 |
+| r2 | 4/4 | 4/6 | 0.667 | 2 |
+| r3 | 4/4 | 5/6 | 0.833 | 1 |
+| r4 | 4/4 | 5/6 | 0.833 | 1 |
+| r5 | 4/4 | 4/6 | 0.667 | 2 |
+
+- **T2_mean = 0.733**, **spread (max−min) = 0.167** (one instance), **headroom = 0.267**.
+- Unlock rule: `0 < 0.733 < 1.0` ✓ **and** `0.267 > 0.167` ✓ → **GATE UNLOCKED**.
+- **Verdict: precondition (2) MET — 19.3 may run.** The T2 micro rung gives a real,
+  non-saturated, above-noise gradient. *(An earlier stale K=3 read had a lucky 6/6
+  outlier → spread 0.333 → would have gated; K=5 shows the true run-to-run noise is
+  ~1 instance, and the misses are concentrated on the `t2-find-coupon`/`-discount`
+  no-edit flakiness.)*
+- **Caveat — the unlock is modest.** Headroom (0.267) exceeds spread (0.167) by only
+  ~0.1 — less than one instance on a 6-instance rung (~1.6 instances of room). GEPA
+  has *somewhere* to climb, but not much; a candidate must clear a 1-instance spread
+  to count.
+
+### Timing + budget (the 19.3-sizing deliverable)
+
+- **Per-T2-rollout median wall = 78.5 s** (mean 77.9 s, max 103 s, n=30); full
+  10-instance micro run compute ≈ **12.5 min** (consistent across r1–r5, zero
+  timeout/restart/OOM). *(The ~3 h wall between runs in the overnight log was the
+  laptop suspending — not harness overhead; effective compute is the recorded
+  `wall_s`.)*
+- **Per-candidate cost** = `per_rollout × T2_n × K` = `78.5 × 6 × K`: **≈ 23.6 min at
+  K=3**, **≈ 39.2 min at K=5**.
+- **Budget**: at a 1 h ceiling, N≈2 candidates (K=3); a meaningful run (N≈10) needs
+  **~4 h of awake compute** at K=3. Wall-clock-feasible but **budget is the binding
+  constraint** — 19.3 must run small-N with **abort → CAPO/OPRO fallback** if
+  unconverged, exactly as designed. (`gepa_budget`, `make gepa-gate`.)

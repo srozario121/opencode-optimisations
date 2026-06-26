@@ -95,6 +95,16 @@ harness-eval-summary:
 harness-recommend:
 	uv run python scripts/harness_eval.py recommend $(RECOMMEND_ARGS)
 
+# --- item 19.2: GEPA feasibility gate (offline; reads the ledger, no model) ---
+# Aggregates the baseline's K-run T2 mean/spread and applies the unlock rule
+# ((ceiling-mean) > spread). Re-measure the K runs first with the micro harness:
+#   for r in 1 2 3 4 5; do make harness-micro CONFIG=micro-baseline \
+#       MICRO_ARGS="--label gepa-gate-r$$r"; done
+#   make gepa-gate                                # default: label-prefix gepa-gate-
+#   make gepa-gate GEPA_ARGS="--out /tmp/gate.json"
+gepa-gate:
+	uv run python scripts/harness_eval.py gepa-gate $(GEPA_ARGS)
+
 # --- signal-producing micro-test harness (tool-call fidelity) ---
 #   make harness-micro CONFIG=micro-baseline      # score one lever config
 #   make harness-micro-selftest                   # offline parse/grade sanity (no model)

@@ -1283,6 +1283,178 @@ def write_tier_report(rows: list[dict]) -> list[dict]:
     return report
 
 
+# --- item 19: GEPA feasibility gate + fitness scalar -------------------------
+# The optimisation loop (item 19) reads the SAME cheap tier aggregation above as
+# its fitness signal. These helpers are the deterministic, unit-tested core of
+# item 19.2 (the gate-check that decides whether GEPA may run AT ALL) and 19.3
+# (the `score = T2_frac − λ·penalty` scalar with the T1 hard gate). They are pure
+# ledger aggregation — no model, no re-run — so the GEPA inner loop can call them
+# per candidate without touching the frozen serve path.
+
+GEPA_T1_TIER = 1
+GEPA_T2_TIER = 2  # the only climbable rung (T3/T4 are the stable 0/8 capability wall)
+# item-17 shared-taxonomy "tool-call floor" modes: asked-for call never landed /
+# runtime error / edit broke previously-passing code. The must-not-regress floor.
+GEPA_FLOOR_MODES = ("no-edit", "error", "catastrophic-edit")
+# λ is set LARGE: any net floor regression (rise ≥ 1 count) must drive the score
+# negative vs baseline — a T2 gain can never buy back a tool-call regression. The
+# penalty is an integer count and T2_frac ∈ [0, 1], so any λ > 1 suffices; 100 is
+# chosen so the floor is visibly near-absolute (consistent with the T1 hard gate).
+GEPA_LAMBDA = 100.0
+
+
+def gepa_tier_cell(row: dict, tier: int = GEPA_T2_TIER) -> dict:
+    """One run's {pass, total, frac, floor_count} for a tier (reuses tier_breakdown).
+
+    ``floor_count`` is the number of instances in the GEPA_FLOOR_MODES taxonomy —
+    the penalty input for the fitness scalar.
+    """
+    cell = tier_breakdown(row).get(tier, {"pass": 0, "total": 0, "cats": {}})
+    total = cell["total"]
+    cats: dict[str, int] = cell.get("cats", {})
+    return {
+        "pass": cell["pass"], "total": total,
+        "frac": (cell["pass"] / total) if total else None,
+        "floor_count": sum(cats.get(m, 0) for m in GEPA_FLOOR_MODES),
+    }
+
+
+def gepa_krun_stats(rows: list[dict], *, suite: str = "micro",
+                    label_prefix: str | None = None,
+                    config_name: str | None = None,
+                    tier: int = GEPA_T2_TIER) -> dict:
+    """Aggregate a config's K repeats into mean / spread (max−min) for a tier.
+
+    Repeats are selected by ``label_prefix`` (e.g. ``gepa-gate-`` picks exactly the
+    fresh re-measure) and/or ``config_name``; every matching ledger run with a
+    non-empty tier counts as one repeat. The spread is max−min of the per-run
+    pass-fraction (the item-16 K-run discipline — a delta must clear the spread,
+    since MLX/Metal decoding is non-deterministic even at temp=0).
+    """
+    sel = []
+    for r in rows:
+        if r.get("suite") != suite:
+            continue
+        if config_name is not None and r.get("config_name") != config_name:
+            continue
+        if label_prefix is not None and not (r.get("label") or "").startswith(label_prefix):
+            continue
+        sel.append(r)
+    fracs, floor_counts = [], []
+    for r in sel:
+        cell = gepa_tier_cell(r, tier)
+        if cell["frac"] is None:
+            continue
+        fracs.append(cell["frac"])
+        floor_counts.append(cell["floor_count"])
+    if not fracs:
+        return {"k": 0, "tier": tier, "fracs": [], "mean": None, "spread": None,
+                "min": None, "max": None, "floor_counts": []}
+    mean = sum(fracs) / len(fracs)
+    return {
+        "k": len(fracs), "tier": tier, "fracs": fracs,
+        "mean": mean, "spread": max(fracs) - min(fracs),
+        "min": min(fracs), "max": max(fracs),
+        "floor_counts": floor_counts,
+        "labels": [r.get("label") for r in sel],
+    }
+
+
+def gepa_gate_check(t2_mean: float | None, spread: float | None,
+                    floor: float = 0.0, ceiling: float = 1.0) -> dict:
+    """The 19.2 unlock rule. GEPA may run iff T2_mean is strictly inside
+    (floor, ceiling) AND the remaining headroom exceeds the K-run spread —
+    ``(ceiling − T2_mean) > spread``. If headroom < sampling noise, a gain can't
+    be proven on this stack ⇒ stay gated ("no climbable signal yet").
+    """
+    if t2_mean is None or spread is None:
+        return {"unlocked": False, "reason": "no T2 data", "inside_band": False,
+                "headroom": None, "spread": spread, "climbable": False}
+    inside = floor < t2_mean < ceiling
+    headroom = ceiling - t2_mean
+    climbable = headroom > spread
+    unlocked = inside and climbable
+    if unlocked:
+        reason = "climbable signal: headroom exceeds K-run spread"
+    elif not inside:
+        reason = ("T2 saturated at ceiling" if t2_mean >= ceiling
+                  else "T2 at floor — no climbable rung")
+    else:
+        reason = "headroom ≤ K-run spread — a gain can't beat sampling noise"
+    return {"unlocked": unlocked, "reason": reason, "inside_band": inside,
+            "headroom": round(headroom, 3), "spread": round(spread, 3),
+            "climbable": climbable}
+
+
+def gepa_fitness(*, cand_t2_frac: float, cand_floor_count: int,
+                 base_floor_count: int, cand_t1_frac: float,
+                 base_t1_frac: float, lam: float = GEPA_LAMBDA) -> dict:
+    """The 19.3 fitness scalar: ``score = T2_frac − λ·max(0, floor_rise)`` with a
+    T1 HARD GATE (any T1 drop below baseline ⇒ rejected outright, not penalised).
+
+    ``floor_rise`` is the net rise above baseline in the GEPA_FLOOR_MODES counts.
+    With λ large, a single floor regression drives the score negative — a T2 gain
+    can never buy it back. T3/T4 carry weight 0 (no gradient) and never enter here.
+    """
+    if cand_t1_frac < base_t1_frac:
+        return {"score": float("-inf"), "t1_gate": "REJECT",
+                "floor_rise": max(0, cand_floor_count - base_floor_count),
+                "reason": f"T1 dropped {base_t1_frac:.3f}→{cand_t1_frac:.3f} (hard gate)"}
+    floor_rise = max(0, cand_floor_count - base_floor_count)
+    score = cand_t2_frac - lam * floor_rise
+    return {"score": score, "t1_gate": "pass", "floor_rise": floor_rise,
+            "reason": ("clean" if floor_rise == 0
+                       else f"floor regressed by {floor_rise} ⇒ score driven negative")}
+
+
+# Keys a GEPA reflector is ALLOWED to write into a candidate config bundle — the
+# text levers only (system prompt → AGENTS.md, tool/skill text via opencode_config,
+# the lever name/description). It may NOT touch the serve path: switching the
+# provider, base_url, or external_provider would move the optimisee off the frozen
+# local Gemma. `gepa_assert_serving_offline` enforces that the evaluated config
+# keeps serving offline (the design's "serving-offline assertion").
+GEPA_REFLECTOR_TEXT_KEYS = frozenset({
+    "name", "description", "system_prompt", "opencode_config", "sampling", "env"})
+GEPA_REFLECTOR_FORBIDDEN_KEYS = frozenset({
+    "external_provider", "model_ref", "base_url"})
+
+
+def gepa_assert_serving_offline(optimisee_cfg: dict) -> None:
+    """Guard the 19.2 'reflector is loop-only' invariant: the config the harness
+    EVALUATES must keep serving on the frozen local Gemma. A reflector-emitted
+    bundle that flips `external_provider`/`model_ref`/`base_url`, or smuggles a
+    non-local provider into `opencode_config`, would move the optimisee off the
+    frozen stack — reject it. (The reflector itself may be a cloud model; only the
+    *evaluated* serve path must stay offline.)
+    """
+    if optimisee_cfg.get("external_provider"):
+        raise ValueError("serving-offline: optimisee config must not set "
+                         "external_provider (the evaluated model stays local Gemma)")
+    for k in ("model_ref", "base_url"):
+        if optimisee_cfg.get(k):
+            raise ValueError(f"serving-offline: reflector may not set '{k}' "
+                             "(serve path is frozen)")
+    oc = optimisee_cfg.get("opencode_config") or {}
+    prov = oc.get("provider") if isinstance(oc, dict) else None
+    if isinstance(prov, dict) and any(p != DEFAULT_PROVIDER for p in prov):
+        raise ValueError("serving-offline: opencode_config.provider may only carry "
+                         f"the local '{DEFAULT_PROVIDER}' block")
+
+
+def gepa_budget(*, per_rollout_s: float, t2_n: int, k: int,
+                wall_budget_s: float) -> dict:
+    """The 19.2 timing deliverable: from the measured per-T2-rollout wall-clock,
+    the candidate budget N (= how many candidates a wall-clock ceiling buys) and
+    the per-candidate cost. One candidate eval = K rollouts over the T2 subset.
+    """
+    per_candidate_s = per_rollout_s * t2_n * k
+    n = int(wall_budget_s // per_candidate_s) if per_candidate_s > 0 else 0
+    return {"per_rollout_s": round(per_rollout_s, 1), "t2_n": t2_n, "k": k,
+            "per_candidate_s": round(per_candidate_s, 1),
+            "per_candidate_min": round(per_candidate_s / 60, 1),
+            "n_candidates": n, "abort_wall_s": wall_budget_s}
+
+
 def _render_tier_report(rows: list[dict]) -> list[str]:
     """Unified 4-tier × failure-mode table (item 17.4/17.5) spanning BOTH suites.
 
@@ -2079,6 +2251,86 @@ def cmd_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def gepa_rollout_wall(rows: list[dict], *, suite: str = "micro",
+                      label_prefix: str | None = None,
+                      config_name: str | None = None,
+                      tier: int = GEPA_T2_TIER) -> dict:
+    """Median / mean / max per-rollout wall-clock for a tier's instances across the
+    selected repeats (the 19.2 timing read). Reuses the same selection as
+    gepa_krun_stats so the timing and the gate come from one repeat set.
+    """
+    walls: list[float] = []
+    for r in rows:
+        if r.get("suite") != suite:
+            continue
+        if config_name is not None and r.get("config_name") != config_name:
+            continue
+        if label_prefix is not None and not (r.get("label") or "").startswith(label_prefix):
+            continue
+        for inst in r.get("instances", []):
+            if instance_tier(inst, suite) == tier and isinstance(inst.get("wall_s"), (int, float)):
+                walls.append(float(inst["wall_s"]))
+    if not walls:
+        return {"n": 0, "median": None, "mean": None, "max": None}
+    sw = sorted(walls)
+    n = len(sw)
+    median = sw[n // 2] if n % 2 else (sw[n // 2 - 1] + sw[n // 2]) / 2
+    return {"n": n, "median": round(median, 1),
+            "mean": round(sum(sw) / n, 1), "max": round(max(sw), 1)}
+
+
+def cmd_gepa_gate(args: argparse.Namespace) -> int:
+    """item 19.2 — the GEPA feasibility gate. Re-reads the ledger (cheap, no model),
+    aggregates the baseline's K-run T2 mean/spread, applies the unlock rule, and
+    sizes the candidate budget from the measured per-T2-rollout wall-clock.
+    Verdict: UNLOCKED ⇒ 19.3 may run; GATED ⇒ "no climbable signal yet".
+    """
+    rows = load_ledger()
+    stats = gepa_krun_stats(rows, suite=args.suite, label_prefix=args.label_prefix,
+                            config_name=args.config_name, tier=GEPA_T2_TIER)
+    gate = gepa_gate_check(stats["mean"], stats["spread"],
+                           floor=args.floor, ceiling=args.ceiling)
+    timing = gepa_rollout_wall(rows, suite=args.suite, label_prefix=args.label_prefix,
+                               config_name=args.config_name, tier=GEPA_T2_TIER)
+    per_rollout = args.per_rollout_s or (timing["median"] or 0.0)
+    t2_n = _t2_total(rows, args)
+    budget = gepa_budget(per_rollout_s=per_rollout, t2_n=t2_n, k=max(3, stats["k"] or 3),
+                         wall_budget_s=args.wall_budget_s)
+    report = {
+        "item": "19.2", "suite": args.suite,
+        "selection": {"label_prefix": args.label_prefix, "config_name": args.config_name},
+        "t2": stats, "gate": gate, "timing": timing, "budget": budget,
+        "lambda": GEPA_LAMBDA, "floor_modes": list(GEPA_FLOOR_MODES),
+    }
+    print(json.dumps(report, indent=2))
+    verdict = "UNLOCKED (19.3 may run)" if gate["unlocked"] else "GATED (no climbable signal yet)"
+    print(f"\n19.2 GEPA gate: K={stats['k']} T2_mean="
+          f"{stats['mean'] if stats['mean'] is None else round(stats['mean'], 3)} "
+          f"spread={gate['spread']} headroom={gate['headroom']} "
+          f"per-rollout={timing['median']}s → {verdict}\n  {gate['reason']}",
+          file=sys.stderr)
+    if args.out:
+        with open(args.out, "w") as f:
+            json.dump(report, f, indent=2)
+        print(f"gate report -> {args.out}", file=sys.stderr)
+    return 0 if gate["unlocked"] else 3
+
+
+def _t2_total(rows: list[dict], args: argparse.Namespace) -> int:
+    """T2 instance count from the most recent matching run (subset size for budget)."""
+    for r in reversed(rows):
+        if r.get("suite") != args.suite:
+            continue
+        if args.config_name and r.get("config_name") != args.config_name:
+            continue
+        if args.label_prefix and not (r.get("label") or "").startswith(args.label_prefix):
+            continue
+        cell = gepa_tier_cell(r, GEPA_T2_TIER)
+        if cell["total"]:
+            return cell["total"]
+    return 0
+
+
 def cmd_selftest(args: argparse.Namespace) -> int:
     """Offline sanity checks for the scoring machinery (no model needed)."""
     ok = True
@@ -2445,6 +2697,78 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     check("18.0 backtest: over-flagging a mode drops precision below 1.0",
           sc2["precision"] is not None and sc2["precision"] < 1.0)
 
+    # --- item 19: GEPA feasibility gate + fitness scalar ---------------------
+    # A 3-repeat synthetic micro ledger for one config: T1 always 1/1 ok; T2 is
+    # {2/2, 1/2, 1/2} with the misses landing in the floor mode `no-edit` — the
+    # same shape as the real baseline (a 6/6 vs 4/6 spread), so the gate logic is
+    # exercised on a fixture that mirrors the live data.
+    def _micro_run(label: str, t2_pass: int) -> dict:
+        insts = [{"id": "t1", "tier": 1, "failure_category": "ok",
+                  "checks_passed": 1, "checks_total": 1, "wall_s": 70.0}]
+        for i in range(2):
+            okk = i < t2_pass
+            insts.append({"id": f"t2-{i}", "tier": 2,
+                          "failure_category": "ok" if okk else "no-edit",
+                          "checks_passed": 1 if okk else 0, "checks_total": 1,
+                          "wall_s": 78.0})
+        return {"suite": "micro", "config_name": "micro-baseline", "label": label,
+                "instances": insts}
+    gepa_rows = [_micro_run("gepa-fix-r1", 2), _micro_run("gepa-fix-r2", 1),
+                 _micro_run("gepa-fix-r3", 1)]
+    gs = gepa_krun_stats(gepa_rows, suite="micro", label_prefix="gepa-fix-")
+    check("19.2 krun: T2 mean/spread aggregate over repeats (mean .667, spread .5)",
+          abs(gs["mean"] - 2 / 3) < 1e-6 and abs(gs["spread"] - 0.5) < 1e-6 and gs["k"] == 3)
+    # Unlock rule: headroom (1−.667=.333) < spread (.5) ⇒ GATED.
+    g_fail = gepa_gate_check(gs["mean"], gs["spread"])
+    check("19.2 gate: headroom < spread ⇒ GATED (no climbable signal)",
+          g_fail["unlocked"] is False and g_fail["climbable"] is False)
+    # A tighter run (spread .0, mean .667) clears it: headroom .333 > spread .0.
+    g_pass = gepa_gate_check(2 / 3, 0.0)
+    check("19.2 gate: headroom > spread ⇒ UNLOCKED",
+          g_pass["unlocked"] is True and g_pass["climbable"] is True)
+    # Saturation: mean at the ceiling is outside the band ⇒ GATED.
+    check("19.2 gate: T2 saturated at ceiling ⇒ outside band, GATED",
+          gepa_gate_check(1.0, 0.0)["unlocked"] is False)
+    # Fitness scalar: a clean T2 gain scores == its T2_frac (no floor penalty).
+    f_clean = gepa_fitness(cand_t2_frac=0.83, cand_floor_count=1, base_floor_count=1,
+                           cand_t1_frac=1.0, base_t1_frac=1.0)
+    check("19.3 fitness: clean candidate (no floor rise) scores its T2_frac",
+          f_clean["t1_gate"] == "pass" and abs(f_clean["score"] - 0.83) < 1e-9
+          and f_clean["floor_rise"] == 0)
+    # A single floor regression (λ large) drives the score negative — a T2 gain
+    # can never buy back a tool-call regression.
+    f_floor = gepa_fitness(cand_t2_frac=1.0, cand_floor_count=2, base_floor_count=1,
+                           cand_t1_frac=1.0, base_t1_frac=1.0)
+    check("19.3 fitness: any floor regression ⇒ score negative vs baseline",
+          f_floor["score"] < 0 and f_floor["floor_rise"] == 1)
+    # T1 hard gate: a T1 drop is rejected outright (−inf), not soft-penalised.
+    f_t1 = gepa_fitness(cand_t2_frac=1.0, cand_floor_count=0, base_floor_count=0,
+                        cand_t1_frac=0.75, base_t1_frac=1.0)
+    check("19.3 fitness: T1 drop ⇒ hard-gate REJECT (−inf)",
+          f_t1["t1_gate"] == "REJECT" and f_t1["score"] == float("-inf"))
+    # Budget: one candidate = K rollouts over the T2 subset; N = ceiling // cost.
+    bud = gepa_budget(per_rollout_s=78.0, t2_n=6, k=3, wall_budget_s=3600.0)
+    check("19.2 budget: per-candidate = per_rollout×t2_n×K, N = budget // cost",
+          abs(bud["per_candidate_s"] - 1404.0) < 1e-6 and bud["n_candidates"] == 2)
+    # Timing read picks up the per-T2-rollout wall from the fixture instances.
+    tw = gepa_rollout_wall(gepa_rows, suite="micro", label_prefix="gepa-fix-")
+    check("19.2 timing: per-T2-rollout median wall read from the ledger",
+          tw["n"] == 6 and abs(tw["median"] - 78.0) < 1e-6)
+    # Reflector-loop-only guard: a text-only candidate (system_prompt) is allowed;
+    # anything that moves the optimisee off the frozen local serve path is rejected.
+    gepa_assert_serving_offline({"name": "c", "system_prompt": "be terse",
+                                 "sampling": {"temperature": 0.0}})  # must not raise
+    _offline_ok = True
+    for bad in ({"external_provider": True}, {"model_ref": "opencode/big-pickle"},
+                {"opencode_config": {"provider": {"opencode": {}}}}):
+        try:
+            gepa_assert_serving_offline(bad)
+            _offline_ok = False
+        except ValueError:
+            pass
+    check("19.2 reflector: serving-offline guard allows text levers, rejects "
+          "provider/external/model_ref overrides", _offline_ok)
+
     print(f"\nselftest: {'OK' if ok else 'FAILURES'}")
     return 0 if ok else 1
 
@@ -2520,6 +2844,25 @@ def main(argv: list[str] | None = None) -> int:
     rc.add_argument("--precision-bar", type=float, default=0.5,
                     help="min precision for a backtest sample to pass (default 0.5)")
     rc.set_defaults(func=cmd_recommend)
+
+    gg = sub.add_parser("gepa-gate",
+                        help="(item 19.2) GEPA feasibility gate: aggregate baseline "
+                             "K-run T2 mean/spread from the ledger, apply the unlock "
+                             "rule ((ceiling−mean)>spread), size the candidate budget")
+    gg.add_argument("--label-prefix", default="gepa-gate-",
+                    help="select the repeat set by label prefix (default: gepa-gate-)")
+    gg.add_argument("--config-name", default="micro-baseline",
+                    help="config_name of the baseline repeats (default: micro-baseline)")
+    gg.add_argument("--suite", default="micro", choices=["swebench", "micro"])
+    gg.add_argument("--floor", type=float, default=0.0, help="lower band edge (default 0.0)")
+    gg.add_argument("--ceiling", type=float, default=1.0, help="upper band edge (default 1.0)")
+    gg.add_argument("--per-rollout-s", type=float, default=None,
+                    help="override per-T2-rollout wall-clock (default: ledger median)")
+    gg.add_argument("--wall-budget-s", type=float, default=3600.0,
+                    help="wall-clock ceiling the budget must fit (default 3600s)")
+    gg.add_argument("--out", default=None, metavar="GATE.json",
+                    help="also persist the gate report to this path")
+    gg.set_defaults(func=cmd_gepa_gate)
 
     st = sub.add_parser("selftest", help="offline sanity checks (no model needed)")
     st.add_argument("--check-sampling", action="store_true",

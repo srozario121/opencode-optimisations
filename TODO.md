@@ -235,13 +235,20 @@ prompts, tool descriptions, skill docs). **Item-16 gate is now SATISFIED** (clos
 control proved the harness sound, so the full harness gives a non-degenerate signal
 and the 0/8 is capability-bound — prompt/skill optimisation is unblocked.
 
-> **⛔ PRECONDITION (1 of 2 done; 19.2 work begins once the T2 gate-check passes).**
-> Item 19's blocker **(1)** — item-16 **L5** reaching a recorded adopt/reject verdict —
-> is now **MET** (L5 `doom_loop` REJECTED, see `CHANGELOG.md`; the whole L0–L6 sweep is
-> closed). Remaining blocker **(2):** the **T2 gate-check** (19.2 task below) must pass.
+> **✅ PRECONDITION MET (both of 2 done, 2026-06-26) — 19.3 is UNBLOCKED.**
+> Blocker **(1)** — item-16 **L5** adopt/reject verdict — **MET** (L5 `doom_loop`
+> REJECTED, see `CHANGELOG.md`; the whole L0–L6 sweep is closed). Blocker **(2)** — the
+> **T2 gate-check** — now **MET**: a fresh **K=5** baseline re-measure gives **T2_mean
+> 0.733, spread 0.167, headroom 0.267**; the unlock rule `(1−mean) > spread`
+> (`0.267 > 0.167`) **PASSES → GATE UNLOCKED** (`docs/structured-optimisation-research.md`,
+> §19.2). The T2 micro rung shows a real, non-saturated, above-noise gradient. *(Caveat:
+> the unlock is modest — headroom exceeds spread by only ~0.1, < one instance on the
+> 6-instance rung — and budget is the binding constraint: per-candidate ≈ 23.6 min at
+> K=3, so a meaningful N≈10 run needs ~4 h awake compute → 19.3 runs small-N with
+> abort→fallback.)*
 > Rationale: item-16's evidence is a **stable 0/8 T3/T4 capability wall** (not harness
 > mechanics), and the only tier with real headroom is the synthetic **T2** rung — so GEPA
-> only has somewhere to climb if T2 still shows a non-saturated, non-noise gradient.
+> only has somewhere to climb if T2 still shows a non-saturated, non-noise gradient. It does.
 
 ### Design decisions (resolved — plan-review 2026-06-24)
 
@@ -310,29 +317,40 @@ and the 0/8 is capability-bound — prompt/skill optimisation is unblocked.
       *counter-arm* (does prompt/skill optimisation move the local pass-rate at all,
       or does item 16's "prompt changes don't help here" finding hold under a
       controlled run, not just hand trace-review?).
-- [ ] **19.2 Feasibility filter (gate + budget — runs only once the L5 precondition
-      tick lands).** Settles whether 19.3 may run AT ALL and, if so, with what budget:
-  - [ ] **(gate) T2 climbable-gradient check.** Re-measure baseline **T2 at K≥3** and
-        apply the unlock rule: pass iff `T2_mean` strictly inside `(floor, ceiling)`
-        **AND `(1.0 − T2_mean) > K-run spread`**. **Fail ⇒ item 19 stays gated**
-        ("no climbable signal yet"); do not proceed to 19.3. (This is precondition (2).)
-  - [ ] **(timing) Per-T2-rollout wall-clock micro-task.** Measure the **median T2
-        rollout wall-clock at K=3 on this machine**; from it **compute the
-        candidate-budget N and the abort wall-clock ceiling** for 19.3. This timing is
-        the concrete deliverable that unblocks 19.3's budget — 19.3 cannot size its run
-        without it.
-  - [ ] **(reflector) Confirm the reflector wiring is loop-only.** Verify a
-        larger/cloud reflector consumes only captured local traces and emits only text
-        levers into the config bundle, with a "serving-offline" assertion; the local
-        Gemma remains optimisee + evaluator.
-  - [ ] **(fitness) Confirm `tier-report.jsonl` is cheap enough as the inner-loop
-        fitness read** and that the `score = T2_frac − λ·penalty` scalar + T1 hard gate
-        compute correctly from it.
-- [ ] **19.3 Prototype GEPA** against the item-17 harness as fitness function — **runs
-      only after both 19.2 gate ticks pass.** Implements the resolved design:
-  - [ ] Fitness = **`T2_frac − λ·(rise in no-edit+error+catastrophic-edit)`** with **λ
+- [x] **19.2 Feasibility filter (gate + budget).** ✓ **DONE 2026-06-26 — VERDICT:
+      UNLOCKED.** All four ticks below pass; 19.3 may run (small-N, abort→fallback).
+      Code shipped in `scripts/harness_eval.py` (`gepa_fitness` / `gepa_gate_check` /
+      `gepa_krun_stats` / `gepa_tier_cell` / `gepa_rollout_wall` / `gepa_budget` /
+      `gepa_assert_serving_offline`, `gepa-gate` subcommand + `make gepa-gate`);
+      `make check` green, selftest 63/63. Full write-up:
+      `docs/structured-optimisation-research.md` §19.2.
+  - [x] **(gate) T2 climbable-gradient check.** ✓ Fresh **K=5** baseline re-measure
+        (`gepa-gate-r1..r5`): T2 fracs `[.667, .667, .833, .833, .667]` → **mean 0.733,
+        spread 0.167, headroom 0.267**. Unlock rule `0<0.733<1.0 AND 0.267>0.167` →
+        **PASS / UNLOCKED**. *(A stale K=3 read with a lucky 6/6 outlier would have
+        gated at spread 0.333; K=5 shows true noise is ~1 instance.)* (precondition (2) MET.)
+  - [x] **(timing) Per-T2-rollout wall-clock micro-task.** ✓ **median 78.5 s/rollout**
+        (n=30); per-candidate `78.5×6×K` = **23.6 min (K=3) / 39.2 min (K=5)**; full
+        micro-run compute ≈ 12.5 min. **Budget: N≈10 candidates needs ~4 h awake compute
+        at K=3** → 19.3 runs small-N with abort→CAPO/OPRO fallback. (`gepa_budget`.)
+  - [x] **(reflector) Confirm the reflector wiring is loop-only.** ✓ `gepa_assert_serving_offline`
+        guards the **evaluated** config: text levers only (`system_prompt`→AGENTS.md via
+        `apply_levers`, tool/skill text via `opencode_config`, `sampling`, `env`); rejects
+        any `external_provider`/`model_ref`/`base_url` flip or non-`mlx-local` provider.
+        Reflector may be cloud (consumes captured `opencode.jsonl` traces) but never sits
+        in `cmd_run`'s serve path. Selftested.
+  - [x] **(fitness) Confirm `tier-report.jsonl` is cheap enough as the inner-loop fitness
+        read.** ✓ `gepa_tier_cell`/`gepa_krun_stats` are pure ledger aggregation (no model,
+        no re-run); `score = T2_frac − λ·penalty` (λ=100) + T1 hard gate compute correctly
+        from it (demonstrated on the live K=5 data + 11 selftests).
+- [ ] **19.3 Prototype GEPA** against the item-17 harness as fitness function — **gate
+      ticks PASSED (2026-06-26) → cleared to run.** The fitness/budget/serving-offline
+      machinery is already shipped by 19.2; 19.3 adds the candidate-generation +
+      reflector loop on top of it. Implements the resolved design:
+  - [x] Fitness = **`T2_frac − λ·(rise in no-edit+error+catastrophic-edit)`** with **λ
         large** (any floor regression ⇒ negative vs baseline) and the **T1 hard gate**
         (reject on T1 drop); T3/T4 reported, weight 0. Keep the **frozen baseline**.
+        ✓ shipped in 19.2 (`gepa_fitness`, λ=100, selftested) — reused as-is by 19.3.
   - [ ] **Cloud-reflector-only** loop (serving offline), **T2-only budget**
         (`≤N × K=3`, abort at the 19.2 wall-clock ceiling → CAPO/OPRO fallback).
   - [ ] **Counter-arm:** a **single fixed GEPA candidate vs frozen baseline, K≥3** —
@@ -351,10 +369,11 @@ and the 0/8 is capability-bound — prompt/skill optimisation is unblocked.
 
 ### Documentation (item 19)
 
-- [ ] **Update** `docs/structured-optimisation-research.md` — append the resolved 19.2/
-      19.3 design (T2-only fitness scalar, λ floor, cloud-reflector-loop-only +
-      offline re-validation, tier-scoped budget, CAPO/OPRO fallback) and, once run, the
-      local-validation result that replaces the **[lit-only]** GEPA verdict.
+- [x] **Update** `docs/structured-optimisation-research.md` — **DONE (19.2 part).** Added
+      §19.2 with the resolved fitness scalar (T2-only, λ=100 floor, T1 hard gate),
+      cloud-reflector-loop-only serving-offline guard, the measured **K=5 gate verdict
+      (UNLOCKED)**, and the timing/budget. *(The 19.3 run result that replaces the
+      remaining **[lit-only]** GEPA verdict still pending 19.3.)*
 - [ ] **Update** `docs/tiered-harness.md` — document `tier-report.jsonl` used as the
       GEPA fitness read and the `score = T2_frac − λ·penalty` + T1-hard-gate definition.
 - [ ] **Update** `docs/opencode-local.md` (master doc) — record item 19's adopt/reject/
