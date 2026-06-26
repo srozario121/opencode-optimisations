@@ -1,7 +1,7 @@
 {
-  "_comment": "Frozen SWE-bench Lite subset for TODO item 11 harness eval. Each instance pre-screened under 30000 est. tokens and verified by running its gold patch (FAIL_TO_PASS flips). Regenerate with scripts/harness_eval.py prepare.",
+  "_comment": "Frozen SWE-bench Lite subset for TODO item 11 harness eval. Each instance pre-screened under 30000 est. tokens and verified by running its gold patch (FAIL_TO_PASS flips). Regenerate with scripts/harness_eval.py prepare. | item 23: T3 expanded to 6 (added sympy-22714/18621/15346).",
   "context_screen_tokens": 30000,
-  "frozen_at": "2026-06-23T08:57:20",
+  "frozen_at": "2026-06-26T13:50:08",
   "instances": [
     {
       "instance_id": "sympy__sympy-13043",
@@ -313,6 +313,120 @@
       "needs_bash": false,
       "expected_tool_seq": [
         "grep",
+        "read",
+        "edit"
+      ]
+    },
+    {
+      "instance_id": "sympy__sympy-22714",
+      "repo": "sympy/sympy",
+      "base_commit": "3ff4717b6aef6086e78f01cdfa06f64ae23aed7e",
+      "test_cmd": "python -m pytest -rA -p no:cacheprovider --no-header -q",
+      "est_context_tokens": 8474,
+      "fail_to_pass": [
+        "test_issue_22684"
+      ],
+      "pass_to_pass": [
+        "test_point",
+        "test_point3D",
+        "test_Point2D",
+        "test_issue_9214",
+        "test_issue_11617",
+        "test_transform",
+        "test_concyclic_doctest_bug",
+        "test_arguments",
+        "test_unit",
+        "test_dot",
+        "test__normalize_dimension"
+      ],
+      "prepared": true,
+      "notes": "installed .[test]; gold flips 1/1 F2P, 11/11 P2P pass",
+      "tier": 3,
+      "n_files": 1,
+      "needs_search": false,
+      "needs_bash": false,
+      "expected_tool_seq": [
+        "read",
+        "edit"
+      ]
+    },
+    {
+      "instance_id": "sympy__sympy-18621",
+      "repo": "sympy/sympy",
+      "base_commit": "b17ef6effe278d5b861d65896cc53442a6370d8f",
+      "test_cmd": "python -m pytest -rA -p no:cacheprovider --no-header -q",
+      "est_context_tokens": 8596,
+      "fail_to_pass": [
+        "test_issue_18618"
+      ],
+      "pass_to_pass": [
+        "test_bc_matmul",
+        "test_bc_matadd",
+        "test_bc_transpose",
+        "test_bc_dist_diag",
+        "test_block_plus_ident",
+        "test_BlockMatrix",
+        "test_block_collapse_explicit_matrices",
+        "test_issue_17624",
+        "test_BlockMatrix_trace",
+        "test_BlockMatrix_Determinant",
+        "test_squareBlockMatrix",
+        "test_BlockDiagMatrix",
+        "test_blockcut",
+        "test_reblock_2x2",
+        "test_deblock"
+      ],
+      "prepared": true,
+      "notes": "installed .[test]; gold flips 1/1 F2P, 15/15 P2P pass",
+      "tier": 3,
+      "n_files": 1,
+      "needs_search": false,
+      "needs_bash": false,
+      "expected_tool_seq": [
+        "read",
+        "edit"
+      ]
+    },
+    {
+      "instance_id": "sympy__sympy-15346",
+      "repo": "sympy/sympy",
+      "base_commit": "9ef28fba5b4d6d0168237c9c005a550e6dc27d81",
+      "test_cmd": "python -m pytest -rA -p no:cacheprovider --no-header -q",
+      "est_context_tokens": 8331,
+      "fail_to_pass": [
+        "test_issue_15129_trigsimp_methods"
+      ],
+      "pass_to_pass": [
+        "test_trigsimp1",
+        "test_trigsimp1a",
+        "test_trigsimp2",
+        "test_issue_4373",
+        "test_trigsimp3",
+        "test_issue_4661",
+        "test_issue_4494",
+        "test_issue_5948",
+        "test_issue_4775",
+        "test_issue_4280",
+        "test_issue_3210",
+        "test_trigsimp_issues",
+        "test_trigsimp_issue_2515",
+        "test_trigsimp_issue_3826",
+        "test_trigsimp_issue_4032",
+        "test_trigsimp_issue_7761",
+        "test_trigsimp_noncommutative",
+        "test_hyperbolic_simp",
+        "test_trigsimp_groebner",
+        "test_issue_2827_trigsimp_methods",
+        "test_exptrigsimp",
+        "test_powsimp_on_numbers"
+      ],
+      "prepared": true,
+      "notes": "installed .[test]; gold flips 1/1 F2P, 22/22 P2P pass",
+      "tier": 3,
+      "n_files": 1,
+      "needs_search": false,
+      "needs_bash": false,
+      "expected_tool_seq": [
         "read",
         "edit"
       ]
