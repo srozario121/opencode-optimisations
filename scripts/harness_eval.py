@@ -2490,8 +2490,12 @@ def gepa_rollout_wall(rows: list[dict], *, suite: str = "micro",
         if label_prefix is not None and not (r.get("label") or "").startswith(label_prefix):
             continue
         for inst in r.get("instances", []):
-            if instance_tier(inst, suite) == tier and isinstance(inst.get("wall_s"), (int, float)):
-                walls.append(float(inst["wall_s"]))
+            # micro instances carry `wall_s`; SWE-bench instances carry `episode_wall_s`.
+            wall = inst.get("wall_s")
+            if wall is None:
+                wall = inst.get("episode_wall_s")
+            if instance_tier(inst, suite) == tier and isinstance(wall, (int, float)):
+                walls.append(float(wall))
     if not walls:
         return {"n": 0, "median": None, "mean": None, "max": None}
     sw = sorted(walls)
@@ -3176,6 +3180,18 @@ def cmd_selftest(args: argparse.Namespace) -> int:
           g_gate["unlocked"] is False)
     check("23.1 gate: shaped mean saturated at 0.50 ceiling ⇒ outside band, GATED",
           gepa_t3_gate_check(0.50, 0.0)["unlocked"] is False)
+    # Timing read for the SWE-bench suite: T3 instances carry `episode_wall_s`
+    # (not the micro `wall_s`) — the per-rollout median must still resolve.
+    t3_wall_rows = [{"suite": "swebench", "config_name": "t3-baseline",
+                     "label": "item23-t3-base-r1", "instances": [
+                         {"id": "a", "tier": 3, "episode_wall_s": 200.0,
+                          "passed": False, "reason": "no-edit"},
+                         {"id": "b", "tier": 3, "episode_wall_s": 600.0,
+                          "passed": False, "reason": "timeout"}]}]
+    t3w = gepa_rollout_wall(t3_wall_rows, suite="swebench",
+                            label_prefix="item23-t3-base-", tier=GEPA_T3_TIER)
+    check("23.1 timing: per-T3-rollout wall reads episode_wall_s (swebench suite)",
+          t3w["n"] == 2 and abs(t3w["median"] - 400.0) < 1e-6)
 
     print(f"\nselftest: {'OK' if ok else 'FAILURES'}")
     return 0 if ok else 1
