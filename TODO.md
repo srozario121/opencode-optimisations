@@ -567,10 +567,32 @@ delegates to subagents (`subagent_type`, background, resume).
           reason recorded.
       - **Plan content rule:** goal/what-to-achieve, **never** detailed how-to. ✓ honored
         (arm a goal-only; arm b procedural is the deliberate finding-#1 contrast).
-- [ ] **20.3 Local-harness validation — multi-arm A/B (the actual evidence).** Run all
-      arms on the **item-23 6-instance T3 set**, K≥3, scoring with the **item-23 shaped
-      reward** (primary) + the binary F2P-flip / full-pass adopt gate. Adopt/reject from
-      the **local numbers**, not the literature. Arms:
+- [x] **20.3 Local-harness validation — multi-arm A/B (the actual evidence).** ✓ **DONE
+      2026-06-27 — VERDICT (i) PARTIAL-ADOPT: the multi-agent SHAPE (arm c) is the only
+      arm that moves T3, but NOT via its mechanism.** All 5 arms run K=3 on the 6-instance
+      T3 set (600s cap), scored by the item-23 shaped reward. Full write-up:
+      `docs/item20-20.3-results.md`. Results:
+
+      | arm | shaped mean (K=3) | Δ vs bare | clears spread? | F2P flips | per-rollout | avg tok |
+      |---|---|---|---|---|---|---|
+      | bare (reused 23.1) | 0.153 | — | — | 0 | 257s | 1688 |
+      | cand2 base | 0.000 | −0.153 | **regress** | 0 | 518s | 1660 |
+      | arm a (goal+nothink) | 0.097 | −0.056 | no | 0 | 187s | 1056 |
+      | arm b (plan-then-build) | 0.083 | −0.070 | no | 0 | 66s | 329 |
+      | **arm c (multi-agent)** | **0.278** | **+0.125** | **YES** | **3** | 455s | 1542 |
+
+      **Headline:** arm c clears the 19.2/23.1 spread test (Δ0.125 > spread 0.083) and
+      lands the **first reproducible T3 real fix** — `sympy-22714` flips F2P 1/1, P2P
+      11/11 in **all 3 repeats** (the correct `evaluate` guard in `point.py`). **But the
+      `task` tool NEVER fired** — the win is a clean grep→read→edit, a *config side-effect*
+      (likely the planner/coder subagent DESCRIPTIONS acting as goal-style scaffolding),
+      NOT working multi-agent delegation (the designed mechanism is inert — confirms the
+      smoke/literature). Cost ≈ bare (1542 tok vs 1688) → **refutes finding #6's 8–15×**.
+      **Caveats:** single-instance-driven (+0.125 rides on 22714 alone), mechanism-
+      uncertain, **confirmation run recommended** (independent K≥3 / full-8 "pass/8
+      holding") before shipping arm c as a default. Planning-first (a/b) does NOT beat
+      bare → finding #1 does not transfer; cand2 does not transfer to T3 (OOM-regresses,
+      measures item-23's unrun "d" arm). Arms run:
       1. **baseline-bare** + **baseline-cand2** (the two reference brackets);
       2. **planning-first** = arm (a) goal-nudge + `nothink` (the cheap, likely-best shape);
       3. **native Plan→Build** = arm (b);
