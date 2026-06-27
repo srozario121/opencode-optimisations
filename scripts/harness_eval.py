@@ -3221,6 +3221,60 @@ def cmd_selftest(args: argparse.Namespace) -> int:
           "rules_append" in GEPA_REFLECTOR_TEXT_KEYS)
     gepa_assert_serving_offline({"name": "c", "rules_append": "be concise"})  # no raise
 
+    # --- item 20: planning-first / orchestration-topology arm configs ---------
+    # The five 20.2 arms must (a) all load, (b) all keep serving on the frozen
+    # local Gemma (gepa_assert_serving_offline), (c) inject text via the APPEND
+    # channel ONLY — never the agent.build.prompt/system_prompt REPLACE channel
+    # that item 18 proved suppresses tool use on this 4B — and (d) carry the
+    # expected topology lever (cand2 base on every non-bare arm; the task tool
+    # re-enabled only on the multi-agent counter-arm c).
+    PLAN_ARMS = ["plan-baseline-bare", "plan-baseline-cand2", "plan-arm-a-goalnudge",
+                 "plan-arm-b-planbuild", "plan-arm-c-multiagent"]
+    CAND2_MARK = "offset = N"   # the cand2 grep->read-offset discipline, the shared base
+    plan_cfgs = {}
+    plan_ok = True
+    for _name in PLAN_ARMS:
+        try:
+            _c = load_config(_name)
+            plan_cfgs[_name] = _c
+            gepa_assert_serving_offline(_c)          # serve path stays local Gemma
+            _build = (_c.get("opencode_config") or {}).get("agent", {}).get("build", {})
+            if _c.get("system_prompt") or _build.get("prompt"):
+                plan_ok = False                       # forbidden REPLACE channel
+        except Exception:
+            plan_ok = False
+    check("20.2 all five arm configs load + pass serving-offline + use no "
+          "prompt-REPLACE channel", plan_ok and len(plan_cfgs) == len(PLAN_ARMS))
+    check("20.2 bare baseline is the bare floor (no rules_append, no opencode_config)",
+          not plan_cfgs.get("plan-baseline-bare", {}).get("rules_append")
+          and not (plan_cfgs.get("plan-baseline-bare", {}).get("opencode_config") or {}))
+    check("20.2 every non-bare arm sits on the cand2 APPEND base",
+          all(CAND2_MARK in (plan_cfgs.get(n, {}).get("rules_append") or "")
+              for n in PLAN_ARMS if n != "plan-baseline-bare"))
+    _c_arm = plan_cfgs.get("plan-arm-c-multiagent", {})
+    _c_oc = _c_arm.get("opencode_config") or {}
+    _c_agents = _c_oc.get("agent") or {}
+    check("20.2 multi-agent counter-arm (c) re-enables the task tool + defines "
+          "planner/coder subagents",
+          _c_oc.get("tools", {}).get("task") is True
+          and _c_agents.get("planner", {}).get("mode") == "subagent"
+          and _c_agents.get("coder", {}).get("mode") == "subagent")
+    check("20.2 only arm c re-enables the task tool (a/b stay single-agent)",
+          all(not (plan_cfgs.get(n, {}).get("opencode_config") or {})
+              .get("tools", {}).get("task")
+              for n in PLAN_ARMS if n != "plan-arm-c-multiagent"))
+    # apply_levers must materialise arm c's task-tool + subagents into opencode.json
+    with tempfile.TemporaryDirectory() as td:
+        apply_levers(td, plan_cfgs["plan-arm-c-multiagent"],
+                     f"{DEFAULT_PROVIDER}/m", DEFAULT_BASE_URL)
+        with open(os.path.join(td, "opencode.json")) as f:
+            _c_written = json.load(f)
+        _wrote_task = _c_written.get("tools", {}).get("task") is True
+        _wrote_planner = _c_written.get("agent", {}).get("planner", {}).get("mode") == "subagent"
+        _wrote_agents_md = os.path.exists(os.path.join(td, "AGENTS.md"))
+    check("20.2 apply_levers materialises arm c task-tool + subagents + AGENTS.md "
+          "append", _wrote_task and _wrote_planner and _wrote_agents_md)
+
     print(f"\nselftest: {'OK' if ok else 'FAILURES'}")
     return 0 if ok else 1
 
