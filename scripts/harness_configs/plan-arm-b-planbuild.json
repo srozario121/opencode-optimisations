@@ -1,0 +1,9 @@
+{
+  "name": "plan-arm-b-planbuild",
+  "description": "item 20.2 arm (b) — native Plan->Build separation, SINGLE-RUN APPROXIMATION (user-chosen 2026-06-27). opencode cannot auto-chain two PRIMARY agents in one headless `opencode run` without the task tool, so the Plan->Build discipline is approximated within the single default `build` primary as an explicit PLAN-THEN-BUILD procedure. *** Injected via rules_append (APPEND), NOT via agent.build.prompt — that REPLACE channel was rejected: item 18 proved replacing opencode's frontier-tuned build prompt suppresses tool use on this 4B (no-edit 5->18, made_edit 16->2). *** Contrast with arm (a): arm (a) is a GOAL-only nudge, arm (b) is a PROCEDURAL plan-then-build (plan -> read -> edit) — this directly tests finding #1 (goal vs guideline/how-to plans) on this stack. Acknowledged collapse (documented, not hidden): a single-shot run has no separable plan/build roles, so 'executor thin / planner thinks' degrades to a plan-first procedure under full thinking. Text/topology lever only; serving stays on the frozen local Gemma.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null,
+  "rules_append": "# Local Gemma coding-agent rules\n\n- To find code: `grep` for it first to get its line number N.\n- Then `read` that file with `offset = N` and `limit = 8`. Read AT line N.\n- Never read a whole file; never read above the matched line.\n\n# Work in two phases\n\n1. PLAN: in 1-2 sentences, name the one file to change and the one change to make.\n2. BUILD: `read` that file at the relevant line, then `edit` it to make the change. Save the edit before you stop.\n"
+}

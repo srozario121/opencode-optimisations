@@ -1,0 +1,9 @@
+{
+  "name": "plan-baseline-cand2",
+  "description": "item 20.2 reference arm (ii) — the SHIPPING config: bare default + the item-19 adopted cand2 terse rules via rules_append (APPEND -> AGENTS.md, never a system_prompt REPLACE — item 18 proved replace suppresses tool use on this 4B). Ported verbatim from gepa-t3-d-cand2port.json / gepa-cand2.json. This is the base ALL topology arms (a/b/c) sit on, so the only lever that varies across arms is the orchestration SHAPE, not the rules text. bare->cand2 isolates cand2's contribution; cand2->planning isolates planning's marginal effect. Text lever only; serving stays on the frozen local Gemma.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null,
+  "rules_append": "# Local Gemma coding-agent rules\n\n- To find code: `grep` for it first to get its line number N.\n- Then `read` that file with `offset = N` and `limit = 8`. Read AT line N.\n- Never read a whole file; never read above the matched line.\n"
+}

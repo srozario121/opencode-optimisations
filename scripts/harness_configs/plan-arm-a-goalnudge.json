@@ -1,0 +1,9 @@
+{
+  "name": "plan-arm-a-goalnudge",
+  "description": "item 20.2 arm (a) — PLANNING-FIRST, the cheap likely-best shape. cand2 base + a bounded GOAL-STYLE plan nudge, both via rules_append (APPEND, never REPLACE). Plan content is GOAL/what-to-achieve, NOT how-to (research finding #1: guideline/how-to plans do WORSE than no plan on weak models; goal plans help — Llama-1B None 25.2% -> Goal 30.2%). Single default `build` primary, single run (no separable executor): the 'thin executor' is approximated by the default toolset + suppressing free-form thinking AFTER the plan sentence. *** RUN-TIME REQUIREMENT: this arm must be run with the NO-THINK proxy live (MLX_PROXY_NO_THINK=1 make mlx-up) *** — nothink is a PROXY-process lever, not a config field (mirrors no-think.json; 23.1 showed nothink once flipped 12481's no-tool-stop to a 15-step edit). Text/topology lever only; serving stays on the frozen local Gemma.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null,
+  "rules_append": "# Local Gemma coding-agent rules\n\n- To find code: `grep` for it first to get its line number N.\n- Then `read` that file with `offset = N` and `limit = 8`. Read AT line N.\n- Never read a whole file; never read above the matched line.\n\n# Before you start\n\n- Open with ONE sentence stating the GOAL: what the fixed code must do differently. State the goal, not the steps.\n- Then immediately call a tool. Do not keep planning in prose — act.\n"
+}

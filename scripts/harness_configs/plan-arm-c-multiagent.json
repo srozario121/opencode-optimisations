@@ -1,0 +1,23 @@
+{
+  "name": "plan-arm-c-multiagent",
+  "description": "item 20.2 arm (c) — the MULTI-AGENT COUNTER-ARM (validates the NEGATIVE claim 'multi-agent is a net loss here' instead of assuming it from papers — research findings #6/#7/#8: 8-15x tokens, no consistent coding win). cand2 base + an orchestration nudge (rules_append, APPEND) + opencode_config that RE-ENABLES the task tool (globally `task:false` in ~/.config/opencode/opencode.json AND on the native build agent) and defines two subagents: `planner` (read-only: edit/write/patch off) and `coder` (applies one edit). The default `build` primary acts as orchestrator and delegates via the task tool. NOTE: the config schema has no first-class lever for task/subagents, so this rides raw in opencode_config (deep-merged into the written opencode.json). gepa_assert_serving_offline passes: no provider/model_ref/base_url flip. Build-time FEASIBILITY PRECONDITION (20.2): a 1-2 instance smoke check that Gemma emits valid tool-calls under this topology — a FAILED smoke is a recorded wall-confirming null ('the weak model can't drive task delegation here'), not an abort. Text/topology lever only; serving stays on the frozen local Gemma.",
+  "opencode_config": {
+    "tools": { "task": true },
+    "agent": {
+      "build": { "tools": { "task": true } },
+      "planner": {
+        "description": "Reads the codebase and returns a 1-2 sentence plan naming the one file and the one change to make. Read-only.",
+        "mode": "subagent",
+        "tools": { "edit": false, "write": false, "patch": false }
+      },
+      "coder": {
+        "description": "Given a plan, applies a single edit to implement it, then stops.",
+        "mode": "subagent"
+      }
+    }
+  },
+  "env": {},
+  "sampling": {},
+  "system_prompt": null,
+  "rules_append": "# Local Gemma coding-agent rules\n\n- To find code: `grep` for it first to get its line number N.\n- Then `read` that file with `offset = N` and `limit = 8`. Read AT line N.\n- Never read a whole file; never read above the matched line.\n\n# You are the orchestrator\n\n- First use the task tool to delegate to the `planner` subagent to get a 1-2 sentence plan.\n- Then use the task tool to delegate to the `coder` subagent to apply the edit.\n- Do not edit files yourself; coordinate the subagents and stop when the fix is saved.\n"
+}

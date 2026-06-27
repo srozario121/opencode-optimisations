@@ -1,0 +1,8 @@
+{
+  "name": "plan-baseline-bare",
+  "description": "item 20.2 reference arm (i) — BARE opencode default, the absolute floor. No rules, no sampling override, no topology change: stock opencode `build` primary + the repo's token-reduced read/grep tools + repair proxy. Identical in spirit to baseline.json; this is the 23.1 bare-baseline (shaped mean 0.153, spread 0.083, K=3) and is the reusable reference bracket — do NOT re-measure from scratch unless drift is suspected. Every topology arm's delta is read against this and against plan-baseline-cand2. Text/topology lever only; serving stays on the frozen local Gemma.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null
+}
