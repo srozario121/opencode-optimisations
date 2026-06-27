@@ -1,7 +1,7 @@
 # TODO — opencode-optimisations
 
-The repo's running work-ledger. **Items 20 and 23** are the open work. **Completed
-items 1–15, 16, 17, 18, 19, 21, and 22 now live in `CHANGELOG.md`** (items 18 and 19's
+The repo's running work-ledger. **Item 20 is the only open work.** **Completed
+items 1–19 and 21–23 now live in `CHANGELOG.md`** (items 18 and 19's
 full ticked detail is also kept inline below for reference). Item 16 (the dominant harness
 bottleneck) closed 2026-06-25: the L0–L6 mechanical-lever sweep is complete and the 0/8
 is **capability-bound, not a harness defect**. **Item 19 (GEPA) closed 2026-06-26: ADOPT
@@ -10,10 +10,13 @@ model.** **Item 18 (recommender) closed 2026-06-26: the two-layer pipeline is va
 (18.0 backtest 3/3 recall=precision=1.0), but its top emitted config REGRESSED in the
 decisive 18.3 A/B (no-edit 5→18, made_edit 16→2, tool-calls 167→34) → verdict REJECT —
 replacing the long tuned system prompt with a terse one suppresses tool use; refines item
-19's "terse helps" to "adding less helps, gutting the prompt hurts".** **Item 23 (new)
-follows item 19: push GEPA up to the next rung, T3 (single-file real fixes), via a shaped
-reward + a longer run** — the 3 T3 instances fail in 3 distinct modes (no-tool-stop /
-tool-churn / near-miss), one of which (21614) is a clean near-miss.
+19's "terse helps" to "adding less helps, gutting the prompt hurts".** **Item 23 closed
+2026-06-27: GEPA on T3 (real fixes) via a SHAPED reward — the gate UNLOCKED (shaped mean
+0.153 > spread) but the Phase-1 probe found NO candidate clears spread; the two measured
+append seeds both REGRESSED → verdict (iii) the T3 wall holds UNDER SHAPING. Refines item
+18/19 further: even *appending* terse mode-targeted rules (not just replacing) regresses the
+weak 4B on real fixes. (d cand2-transfer arm unrun — machine OOM-reclaimed mid-probe 3×.)
+Lasting deliverable: the shaped-reward + `gepa-t3-gate` machinery + the 6-instance T3 set.**
 
 > **Fixed constraints (carry-through from items 8–11, non-negotiable for every
 > open item below).** Fully local / offline at serve time; **16 GB M1**
@@ -455,29 +458,162 @@ delegates to subagents (`subagent_type`, background, resume).
       The 20.1 verdict is **[lit-only]** — citation-checked against papers, **not**
       measured on this stack; none of the sources tested a Gemma-4-E4B coding harness.
       Per the Evidence policy it is a *hypothesis* until 20.3 validates it here.
-- [ ] **20.2 Decision: minimal viable shape.** Bet = one **bounded goal-style
-      planning pass → a thin flat ReAct executor**. Candidate implementations,
-      **cheapest first** (compare on loop-rate + wall-clock):
-      (a) **single-pass constrained template** — emit a short *goal* plan then the
-      first tool call in ONE rollout (no second agent; zero extra rollouts —
-      *likely best cost/benefit*); (b) opencode native **`Plan` primary → `Build`
-      primary** (no `task` tool); (c) a true separate planning sub-agent (most
-      expensive — only if a/b underperform). **Plan content = goal, not how-to.**
-- [ ] **20.3 Local-harness validation — multi-arm A/B (the actual evidence).** Run
-      ALL arms on this machine on item-16's E0 instrumentation; adopt/reject from the
-      **local numbers**, not the literature. Arms:
-      1. **baseline** — current flat ReAct loop;
-      2. **planning-first** — the 20.2 winner (goal-style plan → thin executor);
-      3. **minimal multi-agent** — orchestrator + plan sub-agent + build sub-agent
-         (opencode `task` tool). ← **the counter-arm: validates the NEGATIVE claim**
-         ("multi-agent is a net loss here") instead of assuming it from papers.
-      Metrics per arm: **degenerate-loop rate** (primary), full-harness pass-rate,
-      and **tokens + wall-clock per task** (does multi-agent really cost 8–15× *here*?).
-      **Decisions this run must settle locally:** does planning-first *lower or raise*
-      the loop rate (no source answers this)? is multi-agent actually worse on *this*
-      stack, or did the literature mislead? Item-16 gate satisfied (E0 metrics exist).
 
-### 23. GEPA on the next rung — T3 (single-file real fixes) via a shaped reward + longer run  ▲ — follows item 19
+### Design decisions (resolved — plan-review 2026-06-27)
+
+> Decisions relayed via the coordinator (user picked "most-rigorous across the board");
+> recorded here as the working spec. The 20.1 verdict stays **[lit-only]** until 20.3
+> measures it on this stack.
+
+- **Primary (climbing) signal → REUSE item-23's shaped per-instance reward** (the
+  `−0.25 / 0.0 / +0.25 / +0.50 / +1.0` rung function, `gepa_t3_shaped_score` in
+  `harness_eval.py`), reported as the **mean across the subset**. *Rationale:* the
+  originally-specified primary (degenerate-loop rate) is a **non-bottleneck** (item 16:
+  the real failure modes are no-tool-stop + tool-churn, not loops), and full-harness
+  pass/8 is the flat **0/8 capability wall** with no gradient. The shaped reward is the
+  dense behavioural signal items 19/23 had to build for exactly this reason. Degenerate-
+  loop rate is **demoted to a secondary metric** (still emitted by E0, still reported —
+  it just stops being the adopt signal).
+- **Subset → the item-23 6-instance T3 set** (`scripts/harness_eval_subset.json`, the
+  single-file/single-hunk/single-F2P real fixes: 21614/12481/21627 + 22714/18621/15346).
+  *Rationale:* the shaped reward is keyed on `pass_to_pass_*`/`fail_to_pass_*`, so it only
+  scores **T3/T4 real-fix** instances cleanly — the T1/T2 micro rungs have no P2P/F2P to
+  map. Running 20.3 on the **same shaped-reward regime as item 23** makes the primary
+  signal well-defined for **every arm**. (T4 optional/out-of-scope for the first pass —
+  multi-file, harder, more expensive.) **Interplay with item 23:** same frozen 6
+  instances and the same ~257 s-median T3 rollouts → **the bare-baseline shaped numbers
+  from 23.1 (mean 0.153, spread 0.083, K=3) are the reusable bare-baseline reference**;
+  do not re-measure that arm from scratch. Sequence 20.3 to share the expensive T3 rollout
+  budget with item 23 rather than double-paying it.
+- **Adopt gate (separate, two-ceiling pattern — mirrors item 23) →** the shaped mean is
+  the **climb** signal under the **0.50 behavioural ceiling** (every instance edits with
+  P2P intact — the most a topology/text lever can reach); the **binary F2P flip /6 (and
+  full pass/8 holding) is the SEPARATE adopt gate** at ceiling 1.0. Report both. An arm
+  "moves the signal" iff its shaped K-run mean beats the **bare baseline mean by more than
+  the K-run spread** (the **19.2/23.1 unlock rule** `(other − baseline) > spread`, reused
+  here as the A/B significance test). **Adopt** an arm iff it clears spread **AND** holds
+  full pass/8 **AND** keeps tool-calls valid (the hard floor).
+- **Baseline → BOTH reference arms** run: (i) **bare opencode default** (absolute floor,
+  = the 23.1 bare baseline) and (ii) **default + item-19 `gepa-cand2` via `rules_append`**
+  (the current *shipping* config). *Rationale:* the two brackets attribute the delta —
+  bare→cand2 isolates cand2's contribution, cand2→planning isolates planning's *marginal*
+  effect on top of what we already ship. **All planning/topology arms sit on the cand2
+  base** so the only varying lever is the orchestration shape, not the rules text.
+- **Lever-injection channel → `rules_append` (APPEND), never `system_prompt` (REPLACE).**
+  Confirmed in `apply_levers` (`harness_eval.py:446-458`): `system_prompt`/`agent.prompt`
+  REPLACE opencode's tuned default; `rules_append` writes a local `AGENTS.md` that is
+  APPENDED. Item 18 proved REPLACE **suppresses tool use** on the weak 4B. The goal-plan
+  nudge and the cand2 rules both ride `rules_append`.
+- **Thinking control (finding #2: planner-thinks / executor-thin) →** for arm (a)
+  (single rollout, no separable executor) operationalise as a **bounded goal-plan nudge
+  via `rules_append`** ("open with a 1–2 sentence GOAL of what to achieve, then
+  immediately call a tool") **+ `nothink` sampling** (already shown in 23.1 to flip the
+  12481 no-tool-stop). **Acknowledged tension (documented, not hidden):** a single-pass
+  rollout has no *hard* planner/executor split — the "thin executor" is approximated by
+  keeping the default toolset + suppressing free-form thinking after the plan sentence.
+  Arms (b)/(c) DO have separable roles → thinking is concentrated in the plan
+  agent/subagent there.
+- **Budget / abort discipline (item-23 pattern) →** size from the **measured T3 rollout
+  median (~257 s, 23.1)** via `gepa_budget`; single-rollout arms ≈ `257 s × 6 × K=3` ≈
+  **77 min/arm**; the **multi-agent arm is 8–15× tokens** (research finding #6) → **a
+  go/no-go gate precedes arm (c)**, with a wall-clock ceiling and **abort → fallback to
+  arm (a)** (the cheapest viable shape). **K≥3** mean discipline throughout.
+  `gepa_assert_serving_offline` guards **every** arm (text/topology levers only; serving
+  stays on the frozen local Gemma).
+- **Arm scope → run ALL THREE arms now** (the user override of the gate-then-expand
+  default), INCLUDING the multi-agent counter-arm — but each structural arm carries a
+  **build-time feasibility precondition** (see 20.2): if Gemma cannot emit valid
+  tool-calls under that topology at all, the arm is recorded as a **wall-confirming null
+  result**, never silently skipped.
+
+- [ ] **20.2 Build the arm configs (NO run).** Pick the shape, build the configs,
+      verify feasibility — **no rollouts here** (20.3 runs them). Deliverables:
+      - **Arm configs as `scripts/harness_configs/*.json`** (text/topology levers only;
+        `gepa_assert_serving_offline` must pass on each):
+        - `plan-baseline-bare` — bare opencode default (reuse 23.1's bare baseline; may be
+          a thin alias).
+        - `plan-baseline-cand2` — default + cand2 terse rules via `rules_append` (the
+          shipping reference; port from `gepa-t3-d-cand2port.json`).
+        - `plan-arm-a-goalnudge` — cand2 base + a **bounded goal-style plan nudge**
+          (`rules_append`) + `nothink` sampling. Plan content = **goal, not how-to**
+          (finding #1: guideline-style plans do *worse than none* on weak models).
+        - `plan-arm-b-planbuild` — cand2 base + opencode native **`Plan` primary →
+          `Build` primary** wired raw in `opencode_config` (no `task` tool).
+        - `plan-arm-c-multiagent` — cand2 base + **orchestrator + plan subagent + build
+          subagent** via the opencode `task` tool (the counter-arm; the schema has **no
+          first-class lever** for `task`/subagents, so it rides raw in `opencode_config`).
+      - **Feasibility precondition (cheap, build-time — mirrors 19.2/23.1 gates).** For
+        arms (b) and (c), run a **1–2 instance smoke check** that Gemma actually **emits
+        valid tool-calls** when driving Plan→Build / the `task` tool. **A failed smoke
+        check does not abort the item** — it converts that arm to a **recorded
+        wall-confirming null** ("the weak model can't drive this topology here"), which is
+        itself evidence for the [lit-only] negative claim.
+      - **Plan content rule:** goal/what-to-achieve, **never** detailed how-to.
+- [ ] **20.3 Local-harness validation — multi-arm A/B (the actual evidence).** Run all
+      arms on the **item-23 6-instance T3 set**, K≥3, scoring with the **item-23 shaped
+      reward** (primary) + the binary F2P-flip / full-pass adopt gate. Adopt/reject from
+      the **local numbers**, not the literature. Arms:
+      1. **baseline-bare** + **baseline-cand2** (the two reference brackets);
+      2. **planning-first** = arm (a) goal-nudge + `nothink` (the cheap, likely-best shape);
+      3. **native Plan→Build** = arm (b);
+      4. **minimal multi-agent** = arm (c), orchestrator + plan/build subagents via `task`
+         ← **the counter-arm: validates the NEGATIVE claim** ("multi-agent is a net loss
+         here") instead of assuming it from papers. **Gated by the 20.2 feasibility
+         precondition + a go/no-go wall-clock gate before its expensive rollouts; abort →
+         fallback to arm (a).**
+      **Decisions this run must settle locally:** does planning-first *raise the shaped
+      mean* over the cand2 base by more than the K-run spread (finding #1/#4 on *this*
+      stack)? does it *lower or raise* the (secondary) loop rate (no source answers this)?
+      is multi-agent actually worse here — in shaped mean AND in tokens/wall-clock — or did
+      the literature mislead (finding #6/#7/#8)? **Valid outcomes (all closed, per Evidence
+      policy):** (i) an arm clears spread on the shaped signal with the adopt gate held →
+      **adopt that shape**; (ii) shaped signal moves but no binary flip → **partial**,
+      record which mode the topology is movable on; (iii) no arm moves the shaped signal →
+      the planning hypothesis does **not** transfer to this stack (the [lit-only] verdict
+      is now locally falsified, a valid closed negative).
+
+### Measurement plan (item 20)
+
+- **Climbing signal:** item-23 shaped T3 mean (K≥3) over the 6-instance T3 set, with the
+  19.2 unlock rule at the **0.50 behavioural ceiling**; **adopt gate (separate, ceiling
+  1.0):** a binary F2P flip /6 with full pass/8 held + tool-calls valid.
+- **The single lever varied:** the **orchestration topology** (flat ReAct → single-pass
+  goal-plan → Plan/Build → multi-agent). The rules text is held at the **cand2 base** across
+  all topology arms; the bare arm is the absolute floor reference.
+- **Per-arm metrics:** shaped mean, binary F2P /6, made-edit rate, P2P-intact rate,
+  `tool_call_rounds` (no-tool-stop vs tool-churn discriminator), degenerate-loop rate
+  (**secondary**), and **tokens + wall-clock per task** (does multi-agent really cost 8–15×
+  *here?*). K≥3 mean + spread reported per arm.
+- **Frozen baseline = the item-23 6-instance T3 set**; the bare-baseline shaped numbers from
+  23.1 (mean 0.153, K=3) are the reusable reference. T4 out of scope for the first pass.
+- **Gate:** `make check` (ruff + mypy + pytest) green + a selftest for any new arm-config
+  loading / feasibility-smoke logic touched in `harness_eval.py`. `gepa_assert_serving_offline`
+  asserted on every arm config.
+
+### Documentation (item 20)
+
+- [ ] **Update** `docs/orchestration-planning-research.md` — append a "20.3 local
+      validation" section converting the **[lit-only]** verdict into the measured result
+      (which arm moved the shaped signal; whether multi-agent is a net loss *here*).
+- [ ] **Update** `docs/tiered-harness.md` — note that item 20 reuses the shaped T3 reward
+      as its A/B signal (shared regime with item 23) and the `rules_append` topology arms.
+- [ ] **Update** `docs/opencode-local.md` (master doc) — record item 20's adopt/reject
+      outcome as a lever result (planning topology: adopted / partial / rejected).
+- [ ] **Update** `CHANGELOG.md` only when item 20 closes (item-17/19/21 pattern).
+
+### 23. GEPA on the next rung — T3 (single-file real fixes) via a shaped reward + longer run  ✅ CLOSED 2026-06-27 → `CHANGELOG.md`
+
+> **CLOSED — verdict (iii) the T3 wall holds UNDER SHAPING (a clean, wall-confirming
+> negative).** 23.1 built the machinery and **UNLOCKED** the gate (shaped mean 0.153,
+> headroom 0.347 > spread 0.083 — a real dense gradient under the flat binary 0/6). But the
+> 23.3 Phase-1 probe found **no candidate clears spread on the 0.50 ceiling**: the two
+> fully-measured mode-targeted append seeds both **REGRESSED** (a 0.083, b 0.097 vs 0.153),
+> c (K=1) worse, d unrun. Every measured arm disturbs the one reliable near-miss (18621
+> 0.50→churn) rather than converting headroom → **Phase 2 not unlocked.** **Refines item 19:**
+> not only does *replacing* the prompt hurt (item 18), *appending* terse mode-targeted rules
+> also regresses the weak 4B on real fixes. The lasting deliverable is **23.1** (shaped reward
+> + two-gate fitness + `gepa-t3-gate` + the 6-instance T3 set), reusable when capability moves.
+> Full detail kept below (ticked) + in `CHANGELOG.md`.
 
 **Goal.** Item 19 closed with **ADOPT on T2** (terse rules, T2 0.733→0.917) — the first
 prompt lever that moved a tier on this stack. Push GEPA up to the **next rung, T3**
@@ -643,28 +779,41 @@ is now enforced two ways — the −0.25 catastrophic/hard-fail rung *in* the sc
   - [x] **Budget + gate-check.** ✓ `gepa-t3-gate` (median 256.9 s → ~2 candidates/3 h via
         `gepa_budget`); two-ceiling gate **UNLOCKED** on the 0.50 ceiling, 1.0 reported as the
         separate adopt gate. (Gate did NOT fail — climbable signal confirmed.)
-- [ ] **23.2 Seed the mode-targeted candidates** (a)–(d) as `harness_configs/*.json` (text
-      levers only; `gepa_assert_serving_offline` guards each). **(d) ports cand2's terse text
-      as an APPEND** to the opencode default (match the micro `rules` append; if the
-      `system_prompt`→`AGENTS.md` path replaces rather than appends, add an append channel here).
-- [ ] **23.3 The GEPA run — TWO-PHASE go/no-go.**
-  - [ ] **Phase 1 — cheap N≈3 probe** over the shaped T3 fitness (Opus-4.8 in-loop reflector).
-        **Only unlock Phase 2 if the probe clears spread on the 0.50 ceiling**; else close
-        (negative, wall holds).
-  - [ ] **Phase 2 — the longer run** N≈8–12 × K=3, **chunked across sessions, resume at
-        candidate boundaries** (each candidate's K rollouts finish in one session; persisted
-        state = JSONL ledger + saved candidate configs + a frontier/tried file; mid-candidate
-        suspend discards that candidate's partials). Abort→CAPO/OPRO fallback. Track best by
-        the shaped score **and** any binary F2P flip.
-- [ ] **23.4 Counter-arm + verdict.** Counter-arm = a fixed candidate vs baseline K≥3 on the
-      shaped signal. **Valid outcomes (all closed):** (i) **a real F2P flip** on ≥1 T3 instance
-      (breaks the 0/8 wall — major; the 1.0 adopt gate); (ii) **shaped-signal moves but no
-      binary flip** (partial — a shaped-mean gain clearing the K-run spread with T1+T2 hard
-      gates + P2P held; records which mode is prompt-movable, e.g. engagement yes / fix-content
-      no); (iii) **no movement even on the shaped signal** (the capability wall holds at T3,
-      now validated under shaping, not assumed). Offline re-validate any adopt.
-- [ ] **`make check` green** + selftests for the shaped reward (totality), the two-gate
-      fitness, and the two-ceiling gate logic.
+- [x] **23.2 Seed the mode-targeted candidates** (a)–(d) — ✓ **DONE 2026-06-27.** First added
+      an **APPEND channel**: in the full harness `system_prompt` REPLACES opencode's tuned
+      default (the item-18 trap), so a new **`rules_append`** config key writes a local
+      `AGENTS.md` (opencode APPENDS it), replicating item-19 cand2's `rules.content` append.
+      Four terse seeds (each `rules_append`, `gepa_assert_serving_offline`-guarded, verified
+      offline append-not-replace): **(a) `gepa-t3-a-engage`** anti-no-tool-stop · **(b)
+      `gepa-t3-b-commit`** cap-exploration · **(c) `gepa-t3-c-verify`** restate-the-test ·
+      **(d) `gepa-t3-d-cand2port`** ports cand2's adopted terse text as an APPEND (the transfer
+      counter-arm). `make check` green; selftest covers the append channel.
+- [x] **23.3 The GEPA run — TWO-PHASE go/no-go.** ✓ **Phase 1 ran → Phase 2 NOT unlocked.**
+  - [x] **Phase 1 — N≈3 probe** over the shaped T3 fitness (baseline-identical proxy). Ran the
+        seeds K=3 each: **(a) shaped 0.083 (Δ−0.069), (b) 0.097 (Δ−0.056)** — both **REGRESSED**
+        vs baseline **0.153**, neither clears the spread; **(c) K=1 partial −0.083** (worst);
+        **(d) UNRUN** (machine reclaimed mid-run 3×; the M1 Metal-OOM ceiling kept taking the
+        MLX stack — and the run — down). **No candidate cleared spread on the 0.50 ceiling ⇒
+        Phase 2 NOT unlocked, closed negative.** Mechanism (consistent across a/b/c): every
+        appended rule **disturbed the one reliable near-miss** (18621 0.50→churn) and induced
+        more churn/catastrophic edits rather than clean kept edits. *(Op note: `make mlx-up`
+        wedged on a broken pyenv `python3` (missing gettext `libintl.8.dylib`) — only the proxy
+        uses bare `python3`; fixed with a `python3`→3.12 PATH shim. See memory.)*
+  - [ ] **Phase 2 — the longer run** — **NOT RUN** (Phase-1 go/no-go failed). Held for a future
+        capability shift; reopen only if the shaped signal becomes climbable.
+- [x] **23.4 Counter-arm + verdict.** ✓ **VERDICT: outcome (iii) — NO MOVEMENT even on the
+      shaped signal; the T3 capability wall holds, now VALIDATED under shaping (not assumed).**
+      The counter-arm is candidates (a)/(b) themselves (fixed candidates vs baseline, K=3): both
+      regressed, so item-16/19's "prompt changes don't move the real-code rung" holds under a
+      controlled shaped-reward run — and is **refined**: it's not only that *replacing* the
+      prompt hurts (item 18), **appending** terse mode-targeted rules also regresses the weak 4B
+      on real fixes. No adopt (nothing to re-validate). **Caveat:** 2 of 4 arms fully measured
+      (a,b K=3) + c partial; **d (cand2 transfer) UNRUN** — but a/b/c all point one way, so the
+      negative stands with d flagged. **The lasting deliverable is 23.1** (the shaped reward +
+      two-gate fitness + `gepa-t3-gate` + the 6-instance T3 set), reusable when capability moves.
+- [x] **`make check` green** + selftests for the shaped reward (totality), the two-gate
+      fitness, the two-ceiling gate, the swebench `episode_wall_s` timing, and the
+      `rules_append` append channel. ✓ green throughout.
 
 ### Measurement plan (item 23)
 
@@ -683,11 +832,12 @@ is now enforced two ways — the −0.25 catastrophic/hard-fail rung *in* the sc
 
 ### Documentation (item 23)
 
-- [ ] **Update** `docs/structured-optimisation-research.md` — append §23 (shaped T3 reward,
-      gate-check, the longer-run result; whether the wall moved).
-- [ ] **Update** `docs/tiered-harness.md` — note the shaped T3 reward as the GEPA climbing
-      signal for the real-code rung (vs the binary tier pass used for adopt).
-- [ ] **Update** `docs/opencode-local.md` + `CHANGELOG.md` only when item 23 closes.
+- [x] **Update** `docs/structured-optimisation-research.md` — ✓ §23.1 (shaped reward + gate
+      UNLOCKED) and §23.3 (Phase-1 probe: a/b regressed, wall holds under shaping — verdict iii).
+- [x] **Update** `docs/tiered-harness.md` — ✓ "shaped T3 climbing signal" subsection.
+- [x] **Update** `docs/opencode-local.md` + `CHANGELOG.md` — ✓ done (item 23 closed entry: 23.1
+      machinery shipped + UNLOCKED gate; 23.3 negative — appended rules regress the weak 4B on
+      real fixes too; d unrun).
 
 ### 21. Sandboxed code-execution ("code mode") — DONE (see `CHANGELOG.md`)
 

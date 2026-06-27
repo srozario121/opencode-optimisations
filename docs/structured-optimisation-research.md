@@ -334,3 +334,50 @@ flips clean) alongside the original 21614/12481/21627. Re-baseline (baseline con
 prompt-addressable modes (engage / commit-to-edit / verify-the-fix) → the 23.2 candidates are
 mode-matched. Command: `harness_eval.py gepa-t3-gate --label-prefix item23-t3-base- --suite
 swebench`.
+
+## 23.3 — Phase-1 probe + verdict (measured, 2026-06-27)
+
+### The append channel (23.2)
+
+In the full harness `system_prompt` REPLACES opencode's tuned default prompt (it sets
+`agent.build.prompt` → a file) — the **item-18 trap** where gutting the prompt suppressed tool
+use. Item 23's candidates are short rule ADDITIONS, so a new **`rules_append`** config key was
+added: it writes a local `AGENTS.md` (which opencode APPENDS to the system prompt), replicating
+item-19 cand2's `rules.content` append for the full harness. Four terse seeds, each mode-matched
+to the 23.1 map and `gepa_assert_serving_offline`-guarded: **(a) engage** (anti-no-tool-stop),
+**(b) commit** (cap exploration), **(c) verify** (restate-the-test), **(d) cand2port** (the
+item-19 T2 winner ported as an append — the transfer counter-arm).
+
+### Phase-1 result (K=3 per arm, baseline-identical proxy)
+
+| arm | shaped mean | Δ vs baseline 0.153 | clears spread? |
+|---|---|---|---|
+| **a-engage** | **0.083** | **−0.069** | no |
+| **b-commit** | **0.097** | **−0.056** | no |
+| c-verify (K=1) | −0.083 | — | no (partial) |
+| d-cand2port | *unrun* | — | — |
+
+**Both fully-measured candidates REGRESSED** the shaped mean — neither clears the spread, and
+the *mechanism* is consistent: every appended rule **collapsed the one reliable near-miss**
+(18621, baseline 0.50 clean-edit → churn) and pushed instances into more tool-churn /
+catastrophic edits instead of clean kept edits. The "always emit a tool call" (a) and "edit
+after ≤3 searches" (b) rules raised *activity* but lowered *clean editing*. c's first repeat is
+the worst datapoint yet. **No candidate cleared spread on the 0.50 ceiling ⇒ Phase 2 NOT
+unlocked.**
+
+### Verdict (closed, per Evidence policy — outcome iii)
+
+**The T3 capability wall holds UNDER SHAPING — now validated, not assumed.** The shaped reward
+did its job (exposed a real, climbable gradient — 23.1), but no text lever converts it: the
+counter-arm (a/b, fixed candidates vs baseline at K=3) regresses, so item-16/19's "prompt
+changes don't move the real-code rung" holds under a controlled shaped-reward run. **Refines
+the item-18/19 story:** it's not only that *replacing* the prompt hurts (item 18) — *appending*
+terse, mode-targeted rules also regresses the weak 4B on **real fixes** (it disturbs the fragile
+near-miss). No adopt; nothing to re-validate. **Caveats:** 2 of 4 arms fully measured (a,b K=3)
++ c partial; **d (the cand2 transfer) UNRUN** — the 16 GB M1 Metal-OOM ceiling took the MLX
+stack (and the run) down three times mid-probe — but a/b/c all point the same way, so the
+negative stands with d flagged. **The lasting deliverable is the 23.1 machinery** (shaped reward
++ two-gate fitness + `gepa-t3-gate` + the 6-instance T3 set), reusable the moment model
+capability moves. Op note: `make mlx-up` can wedge on a broken pyenv `python3` (missing gettext
+`libintl.8.dylib`) — only the repair proxy uses bare `python3` (the server uses `uvx`); fix with
+a `python3`→3.12 PATH shim.

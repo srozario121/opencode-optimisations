@@ -1561,6 +1561,29 @@ make harness-micro CONFIG=gepa-cand2 MICRO_ARGS="--label gepa-cand2-r1"
 python scripts/harness_eval.py gepa-score --cand-prefix gepa-cand2-
 ```
 
+## GEPA on the next rung — T3 real fixes (TODO item 23)
+
+**Closed 2026-06-27 — verdict (iii): the T3 wall holds UNDER SHAPING.** Item 19 moved the
+synthetic T2 rung; item 23 pushed GEPA to **T3** (single-file real SWE-bench fixes). Binary T3
+is a flat 0/6 (no gradient), so a **shaped, dense reward** was built (`gepa_t3_shaped_score`, a
+total per-instance function: `−0.25` catastrophic/oom/error · `0.0` no-tool-stop · `+0.25`
+tool-churn · `+0.50` clean edit P2P-intact · `+1.0` F2P flip), with `gepa_t3_fitness` =
+`T3_shaped_mean` under **T1 AND T2 hard gates** and a **two-ceiling** gate (`gepa-t3-gate`:
+unlock on 0.50, adopt on 1.0). The T3 tier was expanded 3→6.
+
+- **23.1 gate UNLOCKED** — re-baseline shaped mean **0.153**, headroom 0.347 > spread 0.083 (a
+  real dense gradient under the flat binary 0/6).
+- **23.3 Phase-1 probe → no movement.** Four terse mode-matched seeds via a new **`rules_append`**
+  APPEND channel (writes `AGENTS.md`; opencode appends it — NOT the `system_prompt` *replace*
+  that burned item 18). The two fully-measured seeds **both REGRESSED** (engage 0.083, commit
+  0.097 vs 0.153), neither clearing spread; they collapsed the one reliable near-miss instead of
+  converting headroom. **Phase 2 not unlocked.** (d, the cand2 transfer arm, unrun — M1
+  Metal-OOM took the stack down 3× mid-probe.)
+- **Decisive finding:** even *appending* terse mode-targeted rules regresses the weak 4B on real
+  fixes — refines item 18 (*replace* hurts) and item 19 (*add less* helps on T2). The shaped
+  reward + `gepa-t3-gate` machinery is the lasting deliverable, reusable when capability moves.
+  Full write-up: `docs/structured-optimisation-research.md` §23.1, §23.3.
+
 ## Troubleshooting
 
 - **OOM / memory pressure on 16 GB** — stick to E4B (or drop to E2B). Close
@@ -1575,6 +1598,15 @@ python scripts/harness_eval.py gepa-score --cand-prefix gepa-cand2-
   `MLX_LM_VERSION` without re-running `make mlx-pull`, the new version isn't
   cached yet. Re-run `make mlx-pull` once while online (it warms the cache), or
   do a one-off `MLX_UVX_OFFLINE=0 make mlx-up` while online.
+- **`make mlx-up` fails: proxy "did not come up" + `dyld: Library not loaded:
+  …/gettext/lib/libintl.8.dylib`** — bare `python3` on PATH resolves to a broken
+  pyenv interpreter (missing gettext). The mlx-lm *server* runs via `uvx` (fine);
+  only the **repair proxy** launches with bare `python3`. Fix without a system
+  change by shimming `python3` → a working interpreter for the call:
+  `mkdir -p /tmp/pyshim && ln -sf ~/.local/bin/python3.12 /tmp/pyshim/python3 &&
+  PATH="/tmp/pyshim:$PATH" make mlx-up` (and keep that PATH for `harness_eval.py
+  run` so a mid-run OOM-restart also works). Permanent fix: `brew install gettext`
+  or repoint `python3`.
 - **opencode can't reach the model** — confirm `make mlx-status` shows
   *running* and the `baseURL` is exactly `http://127.0.0.1:8080/v1` (with `/v1`).
 - **Slow first token** — the model loads into memory on the first request after

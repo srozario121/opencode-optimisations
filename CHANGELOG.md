@@ -33,7 +33,41 @@ claude-mem memory and the `docs/` research.
   ⚠ **Did NOT transfer to the full harness** — see item 16 (in `TODO.md`).
 - **15** — Extracted the opencode stack into this standalone published repo. **= this repo.**
 
-## Done (items 16, 17, 18, 19, 21, 22)
+## Done (items 16, 17, 18, 19, 21, 22, 23)
+
+- **23** — **GEPA on the next rung, T3 (real fixes), via a SHAPED reward — closed
+  2026-06-27, verdict (iii): the T3 capability wall holds UNDER SHAPING (validated, not
+  assumed).** Item 19 moved the synthetic T2 rung; item 23 pushed GEPA up to **T3**
+  (single-file, single-hunk, single-F2P **real** SWE-bench fixes). Binary T3 is a flat
+  **0/6** (no gradient), so the precondition was a **dense shaped reward**.
+  - **23.1 — machinery shipped + gate UNLOCKED (the lasting deliverable).**
+    `gepa_t3_shaped_score` is a TOTAL per-instance reward mapping every terminal to one rung
+    (`−0.25` catastrophic/oom/error · `0.0` no-tool-stop · `+0.25` tool-churn · `+0.50` clean
+    edit, P2P intact · `+1.0` F2P flip; timeout does NOT cap a clean edit; an F2P-flip-that-
+    broke-P2P falls to −0.25). It **replaces item-19's separate λ floor penalty** (floor baked
+    into the score). `gepa_t3_fitness` = `T3_shaped_mean` with **T1 AND T2 both hard gates**
+    (a sibling of `gepa_fitness`, not a mutation). `gepa_t3_gate_check` uses **two ceilings** —
+    unlock the climb on **0.50** (behavioural), report **1.0** (binary F2P flip) as the adopt
+    gate; shipped as `gepa-t3-gate`. **T3 corpus expanded 3→6** (mined the offline SWE-bench
+    Lite cache → 124 candidates; verified 3 new sympy fixes 22714/18621/15346). Re-baseline
+    (K=3): **shaped mean 0.153, headroom-to-0.50 0.347 > spread 0.083 → UNLOCKED** — a genuine
+    dense gradient (rungs `−0.25×2 · 0.0×6 · 0.25×7 · 0.50×3`), binary flips 0/6.
+  - **23.2 — append channel + 4 seeds.** In the full harness `system_prompt` REPLACES the
+    tuned default (the item-18 trap), so added a **`rules_append`** key writing a local
+    `AGENTS.md` (opencode APPENDS it) — the full-harness analogue of cand2's `rules.content`
+    append. Four terse mode-matched seeds: (a) engage, (b) commit, (c) verify, (d) cand2port.
+  - **23.3 — Phase-1 probe → Phase 2 NOT unlocked.** K=3 per arm: **(a) 0.083 (Δ−0.069),
+    (b) 0.097 (Δ−0.056) — both REGRESSED** vs baseline 0.153; neither clears spread; (c) K=1
+    partial −0.083; **(d) unrun** (the 16 GB M1 Metal-OOM ceiling took the stack + run down 3×).
+    Every measured arm **collapsed the one reliable near-miss** (18621 0.50→churn) instead of
+    converting headroom → **no candidate clears the 0.50 ceiling.**
+  - **Decisive finding (refines items 18/19).** Item 18 = *replacing* the prompt hurts; item 23
+    = even *appending* terse, mode-targeted rules **regresses** the weak 4B on **real fixes**
+    (it disturbs the fragile near-miss). The shaped reward proved the gradient is real but
+    **no text lever converts it** — the T3 wall is capability-bound, now shown under shaping,
+    not assumed. Caveat: 2 of 4 arms full (a,b) + c partial; d flagged unrun (a/b/c agree).
+    `make check` green; selftests cover totality + two-gate + two-ceiling + `episode_wall_s`
+    timing + the `rules_append` append channel.
 
 - **18** — **Improvement-recommender agent — closed 2026-06-26, verdict
   REJECT-the-emitted-config (pipeline validated, top proposal does not transfer).**
