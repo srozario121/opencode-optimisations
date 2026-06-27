@@ -1,6 +1,7 @@
 # TODO — opencode-optimisations
 
-The repo's running work-ledger. **Item 20 is the only open work.** **Completed
+The repo's running work-ledger. **Items 20 and 24 are the open work** (24 = the
+model-swap survey, added 2026-06-27). **Completed
 items 1–19 and 21–23 now live in `CHANGELOG.md`** (items 18 and 19's
 full ticked detail is also kept inline below for reference). Item 16 (the dominant harness
 bottleneck) closed 2026-06-25: the L0–L6 mechanical-lever sweep is complete and the 0/8
@@ -526,29 +527,46 @@ delegates to subagents (`subagent_type`, background, resume).
   tool-calls under that topology at all, the arm is recorded as a **wall-confirming null
   result**, never silently skipped.
 
-- [ ] **20.2 Build the arm configs (NO run).** Pick the shape, build the configs,
-      verify feasibility — **no rollouts here** (20.3 runs them). Deliverables:
+- [x] **20.2 Build the arm configs (NO run).** ✓ **DONE 2026-06-27.** Five arm configs
+      built under `scripts/harness_configs/`, all passing `gepa_assert_serving_offline`
+      and all on the cand2 APPEND base (no bare). `make check` green + 6 new item-20
+      selftest checks (config load / serving-offline / no-REPLACE / arm-c task-tool +
+      subagents / apply_levers materialisation). Feasibility smoke run (stack up, no OOM).
+      Deliverables:
       - **Arm configs as `scripts/harness_configs/*.json`** (text/topology levers only;
-        `gepa_assert_serving_offline` must pass on each):
-        - `plan-baseline-bare` — bare opencode default (reuse 23.1's bare baseline; may be
-          a thin alias).
-        - `plan-baseline-cand2` — default + cand2 terse rules via `rules_append` (the
-          shipping reference; port from `gepa-t3-d-cand2port.json`).
-        - `plan-arm-a-goalnudge` — cand2 base + a **bounded goal-style plan nudge**
-          (`rules_append`) + `nothink` sampling. Plan content = **goal, not how-to**
-          (finding #1: guideline-style plans do *worse than none* on weak models).
-        - `plan-arm-b-planbuild` — cand2 base + opencode native **`Plan` primary →
-          `Build` primary** wired raw in `opencode_config` (no `task` tool).
-        - `plan-arm-c-multiagent` — cand2 base + **orchestrator + plan subagent + build
-          subagent** via the opencode `task` tool (the counter-arm; the schema has **no
-          first-class lever** for `task`/subagents, so it rides raw in `opencode_config`).
-      - **Feasibility precondition (cheap, build-time — mirrors 19.2/23.1 gates).** For
-        arms (b) and (c), run a **1–2 instance smoke check** that Gemma actually **emits
-        valid tool-calls** when driving Plan→Build / the `task` tool. **A failed smoke
-        check does not abort the item** — it converts that arm to a **recorded
-        wall-confirming null** ("the weak model can't drive this topology here"), which is
-        itself evidence for the [lit-only] negative claim.
-      - **Plan content rule:** goal/what-to-achieve, **never** detailed how-to.
+        `gepa_assert_serving_offline` passes on each):
+        - ✓ `plan-baseline-bare` — bare opencode default (= 23.1's reusable bare baseline).
+        - ✓ `plan-baseline-cand2` — default + cand2 terse rules via `rules_append` (the
+          shipping reference; ported from `gepa-t3-d-cand2port.json`).
+        - ✓ `plan-arm-a-goalnudge` — cand2 base + a **bounded goal-style plan nudge**
+          (`rules_append`, goal-not-how-to per finding #1). **`nothink` is a PROXY-process
+          lever** (`MLX_PROXY_NO_THINK=1`, set when bringing the stack up), NOT a config
+          field — documented as a run-time requirement for the arm-a 20.3 run (mirrors
+          `no-think.json`); the config carries the goal nudge only.
+        - ✓ `plan-arm-b-planbuild` — **single-run approximation** (user-chosen 2026-06-27;
+          opencode can't auto-chain two PRIMARY agents in one headless run without `task`).
+          Injected as a **procedural plan-then-build via `rules_append` (APPEND)** — the
+          `agent.build.prompt` REPLACE channel was **rejected** per the never-REPLACE rule
+          (item 18 suppression). Contrast with arm a: arm a = goal-only nudge, arm b =
+          procedural plan→read→edit (tests finding #1 goal-vs-how-to on this stack).
+        - ✓ `plan-arm-c-multiagent` — cand2 base + an orchestration nudge (`rules_append`)
+          + `opencode_config` that **re-enables the globally-disabled `task` tool**
+          (`"task": false` in `~/.config/opencode/opencode.json` *and* on the native build
+          agent) and defines `planner` (read-only) + `coder` subagents (the counter-arm;
+          rides raw in `opencode_config` as the schema has no first-class `task` lever).
+      - **Feasibility precondition (smoke, sympy-21614 = the near-miss that edits cleanly
+        bare) — DONE.** Full log: `docs/item20-smoke-notes.md`.
+        - **Arm b: 2/2 samples → 0 valid tool-calls** (S1 narrated an *invalid prose-markdown*
+          search → no-tool-stop; S2 stuck at step 0 → timeout). The procedural append
+          **suppresses tool emission** on an instance that edits cleanly bare → **flagged
+          likely wall-confirming null**. NOT aborted: runs in 20.3 at K≥3.
+        - **Arm c: 8/8 VALID structured tool-calls** (grep/read completed) **but the model
+          NEVER invokes `task`** — it ignores delegation and degrades to flat grep/read
+          **tool-churn** → 360s timeout, no edit. Tool-calls valid; the **multi-agent
+          mechanism is inert** here. Runs in 20.3 as the counter-arm with the mechanistic
+          reason recorded.
+      - **Plan content rule:** goal/what-to-achieve, **never** detailed how-to. ✓ honored
+        (arm a goal-only; arm b procedural is the deliberate finding-#1 contrast).
 - [ ] **20.3 Local-harness validation — multi-arm A/B (the actual evidence).** Run all
       arms on the **item-23 6-instance T3 set**, K≥3, scoring with the **item-23 shaped
       reward** (primary) + the binary F2P-flip / full-pass adopt gate. Adopt/reject from
@@ -1021,6 +1039,116 @@ explicitly **online** exception — run on demand, never in the offline serve pa
   documented opencode-config builder behaviour (the provider-block omission path).
 - **Add** `scripts/harness_configs/online-bigpickle.json` (its `description` is the
   in-ledger doc of the deltas held vs. varied).
+
+### 24. Small-model survey — review 4–7B local models vs the Gemma-4-E4B QAT baseline  ← deep-research item
+
+**Goal.** Decide whether **swapping the local model** (not the harness) is the lever
+that finally moves the **stable 0/8 capability wall** that items 16/18/19/23 proved is
+**capability-bound, not harness-bound**. Items 16–23 have exhausted the *harness-side*
+levers on the frozen **Gemma-4-E4B QAT** (mlx-lm 0.31.3): the L0–L6 mechanical sweep
+(item 16), the recommender (18, REJECT), GEPA on T2 (19, the one modest ADOPT) and GEPA
+on T3 (23, wall holds under shaping) all hit the same ceiling. **Item 22 is the unlock
+for this item:** it proved the harness is **sound** (online BigPickle 4/8 on the
+identical scaffolding where Gemma scores 0/8) → the 0/8 is the *model*, so the obvious
+remaining question is whether a **different small model in the same size/serving class**
+clears more of the wall on **this exact harness**. This item **reviews and ranks
+candidate 4–7B models**, gathers their **external coding-agent benchmarks**, and stages
+them for a head-to-head local A/B against the QAT-Gemma-4 baseline.
+
+> **⚖ Relaxes the "model is FROZEN" constraint — deliberately and narrowly.** Items
+> 8–11 froze the model so that *harness* levers could be measured against a fixed
+> optimisee. That programme is now substantially complete (only item 20 left), and its
+> verdict is "the wall is the model". This item is the sanctioned point to re-open the
+> model choice — but **only within the same deployment class**: fully-local / offline at
+> serve time, **16 GB M1** (~8–12 tok/s decode, ~40–50K-token Metal-OOM ceiling),
+> single-user interactive opencode against a local MLX `/v1` endpoint, repair proxy
+> (`scripts/mlx_repair_proxy.py`) ON. A candidate that needs more RAM, a non-MLX engine,
+> or a cloud endpoint is **out of scope** (that is the item-22 BigPickle bracket, already
+> measured). **Gemma-4-E4B QAT stays the baseline every candidate is scored against.**
+
+> **Hard operational constraint — ONE MODEL LOADED AT A TIME.** The 16 GB M1 cannot hold
+> two of these models in memory simultaneously. Every candidate is **served, evaluated,
+> and torn down sequentially**; the harness points at the single live MLX endpoint per
+> arm. No concurrent serving, no A/B that requires two endpoints up at once. (The
+> baseline numbers are *recorded once* and reused as the fixed reference — Gemma is not
+> re-served alongside a candidate.)
+
+> **Evidence policy binds this item hard.** External leaderboards / model cards / paper
+> benchmarks (SWE-bench, Aider polyglot, LiveCodeBench, BigCodeBench, etc.) are a
+> **ranking starting point, tagged [lit-only]** — they are run on full-precision weights,
+> bigger context, and a different scaffold than ours. A model's headline SWE-bench score
+> does **NOT** transfer to "passes on this 16 GB M1 / 4-bit-quant / opencode / repair-proxy
+> harness". Only a **local K≥3 harness run on this machine** may adopt or reject a
+> candidate. A candidate that cannot even **serve on mlx-lm within the memory ceiling** or
+> **emit valid tool-calls** is recorded as a **feasibility null** (itself evidence), never
+> silently skipped.
+
+### Design decisions (to be resolved — plan-review pending)
+
+Open questions for the plan-review pass (do not assume answers):
+
+- **Candidate axis** — coding-specialised (Qwen2.5-Coder-7B, DeepSeek-Coder-6.7B,
+  Codestral-class) vs general-but-strong (Qwen3-4B/8B, Llama-3.x, Phi-class, Granite,
+  newer Gemma siblings)? The 24.1 survey ranks; plan-review picks the shortlist.
+- **Quantisation parity** — to compare *like with like*, do all candidates run at the
+  same effective bit-width band as the QAT-Gemma baseline (≈4-bit), or is each model
+  taken at its best-fitting MLX quant under the 16 GB ceiling (then the bit-width is a
+  recorded covariate, not a held constant)?
+- **Scoring regime** — reuse the item-17 tiered harness (T1/T2 micro + the item-23
+  6-instance shaped-T3 reward + full pass/8) so a candidate is scored on the **exact same
+  rungs** as every prior item. Primary adopt signal = does any candidate move **full
+  pass/8 above 0** (the wall) where Gemma cannot; secondary = shaped-T3 mean + the T1/T2
+  micro gradient. (Confirm in plan-review.)
+- **Feasibility gate (build-time, cheap)** — per candidate, before any scored run:
+  (a) serves on mlx-lm 0.31.3 within the OOM ceiling, (b) emits valid tool-calls through
+  the repair proxy on a 1–2 instance smoke check. Fail (a) or (b) ⇒ recorded null arm.
+- **Budget / sequencing** — one-model-at-a-time + ~257 s-median T3 rollouts × K≥3 ×
+  N-candidates is expensive; plan-review sizes N and the per-candidate wall-clock ceiling
+  (item-23 `gepa_budget` pattern), with abort discipline.
+
+- [ ] **24.1 Deep-research survey — DELIVERED 2026-06-27** (this session). External
+      benchmarks for small (≈4–7B) local coding-agent models gathered, fact-checked, and
+      synthesised into a ranked shortlist with MLX-availability + 16 GB-fit notes.
+      Report: **`docs/small-model-selection-research.md`**. Verdict tagged **[lit-only]**
+      per the Evidence policy — a ranking, not an adoption; 24.3 is its local validation.
+- [ ] **24.2 Shortlist + feasibility staging (NO scored run).** From the 24.1 ranking pick
+      the shortlist (plan-review), and for each: confirm an MLX (or mlx-lm-loadable) build
+      exists at a quant that fits the 16 GB ceiling, stage a serve recipe (one at a time),
+      and run the cheap feasibility gate (serves + emits valid tool-calls on a 1–2 instance
+      smoke). Deliverable: a `scripts/harness_configs/model-<name>.json` per surviving
+      candidate (provider/model-ref pointing at the locally-served candidate) + a recorded
+      null for any that fail the gate.
+- [ ] **24.3 Local-harness A/B — the actual evidence.** Serve each shortlisted candidate
+      **sequentially** (one model loaded at a time), evaluate on the **same tiered harness +
+      shaped-T3 reward**, K≥3, vs the **recorded Gemma-4-E4B QAT baseline**. Adopt/reject
+      from the **local numbers**. **Valid outcomes (all closed, per Evidence policy):**
+      (i) a candidate moves full pass/8 above 0 (or clears the shaped-T3 spread) → a
+      **model swap is the lever**, recommend it; (ii) candidates move the micro/shaped
+      gradient but not pass/8 → **partial**, record the rung; (iii) no candidate beats
+      Gemma on this harness → the 4–7B class is a wall *here* and BigPickle-class (item 22)
+      is the only thing that clears it — a valid closed negative that re-justifies the
+      original frozen-Gemma choice.
+
+### Measurement plan (item 24)
+
+- **Baseline:** the recorded Gemma-4-E4B QAT numbers (reuse the item-17/23 baseline
+  ledgers; do not re-serve Gemma alongside a candidate).
+- **The single lever varied:** the **served model** (Gemma → candidate). Harness, tiers,
+  shaped reward, repair proxy, sampling defaults held fixed across arms.
+- **Per-candidate metrics:** full pass/8, shaped-T3 mean (+ spread), T1/T2 micro fracs,
+  made-edit / tool-call-validity rates, tok/s + peak RAM (the deployment-fit covariates),
+  and the quant bit-width used. K≥3 mean + spread per candidate.
+- **Gate:** `make check` green for any harness code touched; `gepa_assert_serving_offline`
+  (or equivalent) asserts each candidate config stays on a local MLX endpoint.
+
+### Documentation (item 24)
+
+- [ ] **Add** `docs/small-model-selection-research.md` — the 24.1 survey (DONE this
+      session): ranked candidates, external benchmarks with citations, MLX/quant/16 GB-fit
+      notes, the [lit-only] tag.
+- [ ] **Update** `docs/opencode-local.md` (master doc) — record item 24's adopt/reject
+      outcome (model swap: adopted / partial / rejected) once 24.3 closes.
+- [ ] **Update** `CHANGELOG.md` only when item 24 closes (item-17/19/21 pattern).
 
 ---
 
