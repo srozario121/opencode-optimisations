@@ -1,10 +1,11 @@
 # TODO — opencode-optimisations
 
-The repo's running work-ledger. **Items 24, 25, 26 and 27 are the open work** (24 = the
+The repo's running work-ledger. **Items 24, 25, 26, 27 and 28 are the open work** (24 = the
 model-swap survey, added 2026-06-27; 25 = GEPA-optimise the multi-agent planning prompt;
 26 = evaluate codegraph-class codebase-exploration tools for planning — both added
 2026-06-28, following item 20; 27 = extend GEPA to optimise ONLINE optimisee models
-(BigPickle-as-example, configurable), added 2026-06-28). **Completed
+(BigPickle-as-example, configurable), added 2026-06-28; 28 = a formal-verifier stage in a
+plan→verify→implement multi-agent loop, 900 s cap, added 2026-06-28). **Completed
 items 1–23 now live in `CHANGELOG.md`** (items 18, 19 and 20's
 full ticked detail is also kept inline below for reference). **Item 20 (planning-first /
 orchestration topology) closed 2026-06-28: verdict (ii) PARTIAL — planning-first does not
@@ -1603,12 +1604,36 @@ models, or any `external_provider` ref), with BigPickle as the default.
       token-cost(=0) sub-block. Selftest: 5 new item-27 checks (online guard accept + 4 rejects,
       mode dispatcher routing, the ceiling bug-fix, the online budget sub-block) — all green;
       `make check` clean across all 10 files.
-- [ ] **27.2 Online-GEPA feasibility gate (mirror 19.2) — MEASURE the missing baseline first.**
-      K≥3 baseline measure of BigPickle's shaped-T3 mean + spread **on the 6-instance tier-3
-      set** (this closes the [lit-only] headroom claim above). Apply the unlock rule with
-      **ceiling = 1.0** (online mode), not 0.50. Budget the run from measured online **latency +
-      rate-limit/retry count** (`gepa_budget` online dimension; token-cost recorded-as-zero for
-      the free default). Abort→fallback (or close as a negative) if no climbable headroom > spread.
+- [x] **27.2 Online-GEPA feasibility gate (mirror 19.2) — MEASURE the missing baseline first.** —
+      **DONE → GATED (near-ceiling, 2026-06-28).** K=3 baseline of BigPickle on the 6-instance
+      tier-3 set (`online-bigpickle-t3-r1..r3`): **5/6, 5/6, 4/6 = 14/18 binary F2P flips**, shaped
+      **mean 0.75** (runs 0.79/0.88/0.58), spread 0.292. Rungs: **14× +1.0** (real fix), 1× +0.25
+      (tool-churn), **3× −0.25** (catastrophic — edit broke P2P). **This CLOSES the [lit-only]
+      headroom claim:** BigPickle has real, large T3 capability — categorically unlike the local
+      4B's 0/6 wall (item 22's 4/8 was the *mixed* T3+T4 subset; this is the tier-3-only fitness
+      set). **The 0.50→1.0 ceiling fix was load-bearing:** mean 0.75 > the 0.50 local cap, so the
+      old constant would have computed *negative* headroom and nonsensically gated. Applying the
+      **online (ceiling 1.0)** unlock rule: headroom-to-1.0 (**0.25**) ≤ K-run spread (**0.292**)
+      → **GATED**. ⚠ **Novel gate reason — the MIRROR of the local negative:** not "T3 wall holds /
+      no capability" but **near-ceiling** — BigPickle is so close to a perfect 6/6 that the small
+      remaining headroom is swamped by run-to-run noise (the spread is driven by the 3 occasional
+      P2P-breaking edits, not by failures to engage). Budget (`gepa_budget` online dim, measured):
+      per-rollout median **163.7s**, per-candidate **≈49 min** at K=3, fits 3 candidates in the 3h
+      ceiling; retry/variance 0, token-cost $0 (free BigPickle). Gate report via
+      `gepa-t3-gate --online --label-prefix online-bigpickle-t3-`.
+- [x] **27.2b Build a harder online fitness surface (user-chosen path) → T4 UNLOCKED
+      (2026-06-28).** Since BigPickle is near-ceiling on T3, switched the fitness surface to the
+      **5 tier-4 (multi-file/reasoning) instances** (13043/15345/11400/18532/19007 — already
+      prepared). Generalised the gate machinery to a **configurable tier**
+      (`gepa_t3_shaped_stats(tier=)`, `gepa-t3-gate --tier`; selftest added). K=3 baseline
+      (`online-bigpickle-t4-r1..r3`): **2/5, 2/5, 2/5** binary (mean 2.0/5, **spread 0** — temp 0.0
+      is near-deterministic), shaped **mean 0.65, spread 0.0**, headroom-to-1.0 **0.35 > 0 →
+      UNLOCKED**. Rungs: **6× +1.0** (15345/18532 solved), **6× +0.50** (11400 F2P 0/2, 19007 F2P
+      1/3 — clean edit but fix wrong/incomplete), **3× +0.25** (13043 no-edit). Budget: per-rollout
+      **60s**, per-candidate **15 min** at K=3, fits 12 candidates in 3h. **Reflection signal
+      (deterministic): BigPickle's defect is VERIFICATION/COMPLETENESS, not engagement** — unlike
+      the weak 4B, it edits on 4/5 but doesn't run the failing tests / cover all cases / always
+      commit. This is the proper GEPA surface → 27.3 proceeds.
 - [ ] **27.3 Run GEPA with the online optimisee.** Opus-4.8 in-loop reflector evolves the text
       levers; evaluate each candidate K≥3 against the **online** optimisee with
       `gepa_t3_shaped_score` (T1 hard gate + tool-call floor hold; `gepa_assert_online_optimisee`
@@ -1655,18 +1680,270 @@ models, or any `external_provider` ref), with BigPickle as the default.
       the 1.0 online ceiling, the budget dimension, and the commands.
 - [ ] **Update** `CHANGELOG.md` only when item 27 closes.
 
+### 28. Formal-verifier stage in a PLAN → VERIFY → IMPLEMENT loop  ← deep-research + local-eval item
+
+**Goal.** Test whether inserting a **verifier stage** — a formal-methods-derived,
+automatic, cheap PASS/FAIL signal — **between planning and implementation** improves the
+weak local 4B's real-fix rate. Items 16/18/19/23 proved the harness is sound and the 0/8 is
+**capability-bound**; item 20 found the only real T3 fix (22714) came from the multi-agent
+topology but was **OOM/variance-bound, not robust**, and that the weak model **churns
+grep/read** and **edits without checking its own work**. This item asks: if a planner drafts
+a goal, a **verifier** mechanically gates the plan/edit against a spec-free correctness signal
+(does it parse / type-check / not break the regression tests / satisfy a generated property)
+**before** the implementer commits, does the weak model land more fixes and waste fewer
+rollouts? The architecture is a three-role loop — **planner → verifier → implementer** (an
+extension of item-20 arm-c's orchestrator + planner/coder subagents, with a verifier role
+added) — and is the **longer, multi-agent shape**, so it runs at a **900 s per-instance cap**
+(vs the 600 s Gemma default), set via the config `timeout` field (already supported,
+`harness_eval.py:2519`; `online-bigpickle.json` uses it).
+
+> **Hard constraints carry through (items 8–11).** Fully **local / offline at serve time**,
+> **16 GB M1**, model + serving engine **FROZEN** (Gemma-4-E4B QAT, mlx-lm 0.31.3). The
+> verifier must run **locally and offline** and integrate as an **opencode tool** (a
+> `.opencode/tools/*.ts` shadow tool, the item-21 code-mode sandbox, or a local MCP server)
+> so it rides the existing harness lever path. A verifier needing the cloud, a non-Python
+> translation step, or a hand-written formal spec per instance is out of scope. Tool-call
+> reliability stays a hard floor (repair proxy ON).
+
+> **⚠ Anti-leakage constraint (decisive — the benchmark validity floor).** The hidden
+> **fail-to-pass (F2P) tests are the GROUND-TRUTH label** and must **never** be visible to
+> the in-loop verifier — handing them to the agent is benchmark cheating, not a fix. The
+> verifier may consume ONLY spec-free signals the agent could legitimately compute at solve
+> time: syntax/parse, static type-consistency, lint, the **pass-to-pass (P2P) regression
+> subset** ("don't break what already works"), and **agent/LLM-generated** properties or
+> asserts (which are themselves fallible — see the spec problem below). 28.2 must assert F2P
+> isolation in code, and 28.3 must show any gain is NOT an F2P leak.
+
+> **The specification problem (the central risk).** Real bug-fix tasks ship **no formal
+> spec**, so heavyweight deductive verifiers and proof assistants that *require* one are
+> structurally a poor fit (see the framework assessment below). The verifier signal must be
+> **derivable without a per-instance hand-written spec**. Where a spec is synthesised
+> (LLM-as-spec-writer → Hypothesis properties / `deal`/`icontract` contracts), its
+> **reliability is itself an open question** — a wrong generated property can mislead the weak
+> model worse than no verifier (cf. item 18: bad guidance suppresses tool use). Treat
+> generated-spec arms as hypotheses, not assumed wins.
+
+> **Evidence policy.** Every "verifier X helps" claim — and the framework recommendation
+> below — is **[lit-only]** until a **local K≥3 A/B** on the shaped-T3 set closes it. The 28.1
+> survey *ranks*; only a harness run *adopts*. Per the counter-arm rule, a "verifier doesn't
+> help here" outcome is built and measured, never assumed from papers.
+
+### Framework assessment ([lit-only] — 28.1 deep-research DONE 2026-06-28, `docs/formal-verifier-research.md`)
+
+> ✅ The 28.1 deep-research survey **ran 2026-06-28** (`wf_29a63d03-7d2`: 27 sources, 25 claims
+> adversarially verified, 24 confirmed) and **confirms the domain-reasoned ranking below with
+> three refinements** (full cited write-up: `docs/formal-verifier-research.md`):
+> 1. **CrossHair (Z3-backed concolic) is the best formal-methods-derived fit for untyped Python**
+>    — runs the live function with symbolic-proxy objects, no static types needed → promote it to
+>    Tier-1-adjacent (still needs a property/contract to check, so a strong model authors it).
+> 2. **pyright > mypy** as the type gate — pyright type-checks ALL code + infers return types;
+>    mypy skips unannotated functions. Prefer pyright.
+> 3. **The test signal is WEAK and GAMEABLE** — 20–31% of "solved" SWE-bench patches are
+>    semantically wrong; frontier models reward-hack tests 76–93%. Hardening the verifier +
+>    withholding hidden F2P is **load-bearing**, not optional (sharpens the anti-leakage rule).
+> The capability-tier gap is the headline caveat: **essentially NO published evidence a verifier
+> helps a weak ~4B local model on repo bug-fixing** → item 28's 28.3 A/B is the open empirical
+> contribution. The constraints below stand: **(A) spec availability** (no per-instance formal
+> spec exists) and **(B) local runtime cost** (16 GB M1, cheap dense pass/fail).
+
+- **TIER 1 — ADOPT-candidate verifier signals (spec-free, local, cheap, dense):**
+  - **The repo's own runnable tests — P2P regression subset ONLY** (never F2P). The single
+    strongest spec-free oracle; zero spec-writing; already computed by the harness scorer. In
+    the loop it answers "did the edit break working behaviour?". *Cost:* one test run/iteration.
+  - **Static type-consistency — `mypy` / `pyright`.** No spec needed, fast, fully local,
+    catches a real error class (bad attributes, arg/return mismatches) the 4B introduces.
+    Dense-enough gate signal.
+  - **Lint / parse — `ruff` / `pyflakes` / `ast.parse`.** The cheapest filter (sub-second):
+    does the edit parse, no undefined names, no broken imports. The natural first gate before
+    any heavier check.
+- **TIER 2 — PROTOTYPE (higher value, real reliability risk):**
+  - **Property-based testing — `Hypothesis`**, with **LLM-as-spec-writer** generating the
+    properties. Spec-free *infrastructure* but the *properties* are model-generated and
+    fallible (the spec problem). Worth one arm; gate on whether generated properties are sound.
+  - **`CrossHair`** (concolic / **Z3**-backed symbolic execution of Python). Finds
+    counterexamples to contracts/asserts without a full suite — but needs `deal`/`icontract`
+    contracts or inline asserts to check against, and is **slow on non-trivial code** (the 16 GB
+    /latency budget bites). Niche; behind Hypothesis.
+- **TIER 3 — AVOID for this stack (constraint (A) and/or (B) fails):**
+  - **Deductive verifiers / proof assistants — Dafny, Frama-C, Verus, Why3, Coq/Rocq, Lean 4,
+    Isabelle, Nagini/Viper.** All require a **hand-written formal specification** and/or a
+    **non-Python translation/autoformalization** step that does not exist for arbitrary
+    SWE-bench Python. The autoformalization cost dwarfs any benefit on a 16 GB M1, and the
+    spec problem (no per-instance spec) makes them structurally inapplicable here.
+  - **Raw SMT (`Z3`/`CVC5`) as a direct verifier** — only applies once a logical model is
+    extracted, which is the hard part for arbitrary repo logic. (Used *indirectly* under
+    CrossHair, not directly.)
+  - **Bounded model checkers — `CBMC` (C-only), `ESBMC`** (ESBMC-Python frontend exists but is
+    immature for real repos). Avoid for the first pass.
+  - **LLM + theorem-prover work (DeepSeek-Prover, AlphaProof, LeanDojo, Lean Copilot, Baldur,
+    Thor)** — demonstrated on **competition math / Lean-formal-spec** settings, **does not
+    transfer** to spec-free practical Python bug-fixing. Out of scope.
+
+> **Recommendation (preliminary, prove via 28.1 + 28.3):** wire the verifier stage from the
+> **Tier-1 spec-free signals — P2P-regression-run + `ruff`/parse + `mypy` type-check** — as the
+> cheap, dense, no-spec gate the 4B loop can actually consume, then (only if Tier 1 moves the
+> signal) prototype **one Tier-2 LLM-generated-`Hypothesis`-property arm** to test whether a
+> synthesised spec adds anything net of its reliability risk. **Do not** invest in deductive
+> verifiers / proof assistants: they fail the no-spec constraint outright on this workload.
+
+### Feasibility probe — can the 4B write/use Lean? (MEASURED 2026-06-28 — `docs/item28-lean-probe-notes.md`)
+
+A cheap build-time probe (Lean 4.31.0 via elan; the live local 4B on `:8080`; greedy)
+testing the user-raised idea "let **Opus author the Lean spec** (the hard part); test whether
+the 4B can write/use Lean". Two regimes gated:
+
+- **Regime B (4B WRITES Lean): NOT viable — 3/6 sorry-free compiles, and the gap is the
+  proofs.** The 4B writes trivial `def`s (A1 2/2) but **cannot reliably write proofs**: the
+  *easier* goal `n+0=n` (closes by `rfl`) FAILED both conditions by **over-engineering** — the
+  correct one-liner compiles in bare Lean (control exit 0), so it is the model's failure, not
+  the environment's; the harder `0+n=n` passed only when instructed (`by simp`). The
+  **planner-Lean-instructions** hypothesis helps (flipped A3 to PASS, suppressed hallucinated
+  `import Mathlib…`) but did **not** close the proof gap. *Cost confound (a finding itself):* a
+  real Lean-proof env needs **Mathlib = multi-GB + long build on the 16 GB M1** → fails the
+  local-cost constraint. Since the proof *is* the verification, Lean-as-4B-output is out →
+  **confirms the Tier-3 "avoid" placement empirically, not just by argument.**
+- **Regime C (Opus authors the spec, 4B READS it, fixes in Python): mechanically feasible but
+  UNPROVEN to help — 4/4 fixes, non-discriminating.** The 4B consumes a Lean spec without being
+  derailed (so Opus-writes-the-spec *does* remove the spec-availability blocker), but the Lean
+  spec did **not beat a plain-NL spec** and was **slower** (e.g. 38.6 vs 21.9 s) — the probe
+  tasks were too easy to discriminate. ⇒ if pursued, Lean is only ever a **regime-C planning
+  artifact** (never compiled against the candidate Python — that reintroduces the Python↔Lean
+  autoformalization gap), added as a **speculative arm that must beat an NL spec** on a
+  *discriminating* task set, ranked **below** the Tier-1 gate.
+
+> **Net:** the probe does **not** change the headline recommendation (Tier-1 spec-free signals).
+> "Opus writes the spec" is sound and removes blocker #1, but (a) the 4B can't write the proofs
+> regime B needs, and (b) on the read side a Lean spec wasn't worth its latency vs NL on easy
+> tasks. Lean stays **Tier-3 for the verifier role**; the only live Lean question is the
+> regime-C plan-spec arm, deferred behind Tier-1 and gated on beating NL.
+
+> **⚖ RESOLVED DECISION (user, 2026-06-28) — capability-tiered: for LOCAL models < 16 GB,
+> AVOID formal proving (Lean/Coq/proof-assistants) for now.** The probe shows the proof-writing
+> capability isn't there at the 4B/16 GB tier (3/6, zero reliable proofs), so formal proving is
+> **out of scope for the local arms** of item 28 — they use the **Tier-1 spec-free verifier**
+> only. Formal proving is **NOT abandoned in general**: it is re-opened as a **separate
+> capability-gated question for capable ONLINE models** (BigPickle-class). Mirrors item 27's split
+> (frozen-local vs online optimisee): the local serve path stays proof-free; the online branch
+> is where the proof-assistant architecture is allowed to be tested.
+> **⚠ But the equivalent online probe (MEASURED 2026-06-28, `docs/item28-lean-probe-notes.md`)
+> already shows capability is necessary-NOT-sufficient:** BigPickle wrote a valid compiling
+> inductive proof of `n+0=n` in 4.5 s — the exact task the 4B failed both ways, so it clears the
+> proof-writing bar — **but 28.1's cited research is decisive that clearing that bar does NOT make
+> Lean a viable verifier for Python** (the spec-availability + Python↔Lean autoformalization walls
+> are capability-independent; AlphaProof/DeepSeek-Prover only work where a formal statement
+> pre-exists). ⇒ even on the online branch the recommended verifier is an **AutoCodeSherpa-style
+> PBT + symbolic-condition gate, NOT Lean**. (Fuller BigPickle run blocked by gateway throttling;
+> script is the deliverable, re-runnable.)
+
+**Open questions this item must settle:**
+- Does a verifier *gate between plan and implement* raise the **shaped-T3 mean** past spread
+  (survives re-val) on this stack, or does the extra stage just add latency/OOM exposure (the
+  900 s cap is a symptom — does the longer loop pay for itself)?
+- Which Tier-1 signal carries the gain — regression tests, type-check, or lint — and do they
+  **stack** or is one sufficient? (Ablate.)
+- Does the verifier **reduce wasted rollouts** (fewer no-edit/edit-then-break, lower OOM rate)
+  even when it doesn't flip a fix — i.e. is it a *reliability* win like item-21 code-mode, not a
+  correctness win?
+- Does an **LLM-generated spec** (Tier 2) help or *mislead* the weak model (the item-18 "bad
+  guidance suppresses" risk applied to specs)?
+
+### Design decisions (to be resolved — plan-review pending)
+
+Open for the plan-review pass (do not assume answers — but these are the leaning defaults):
+
+- **Verifier signal axis** — Tier-1 spec-free (P2P-regression + type + lint) vs a Tier-2
+  generated-spec arm. *Leaning:* Tier-1 first (28.2), Tier-2 only if Tier-1 moves the signal.
+- **Topology** — extend item-20 arm-c (`task` tool + `planner`/`coder` subagents) with a third
+  **`verifier`** subagent (read-only + run-checks tool), the orchestrator looping
+  plan→verify→implement→re-verify. *Tension (record, don't hide):* item 20 found the `task`
+  tool **never fired** on the weak 4B — so a single-pass `rules_append` procedural approximation
+  (plan, then run the checks tool, then edit) is the fallback if the multi-agent mechanism stays
+  inert. Both forms ride text/topology levers only (`gepa_assert_serving_offline` passes).
+- **Verifier mechanism** — a local `.opencode/tools/*.ts` shadow tool (or the item-21 code-mode
+  sandbox) that runs ruff/parse + mypy + the P2P subset and returns a structured pass/fail the
+  agent reads. **F2P tests are withheld from this tool by construction** (anti-leakage).
+- **Timeout → 900 s per instance for the multi-agent verify arms** (vs 600 s Gemma default),
+  set via the config `timeout` field (no code change — already honoured at
+  `harness_eval.py:2519`). Baseline/bare arms stay at their existing caps so the delta is the
+  topology, not the clock. *(Resolved per user request 2026-06-28.)*
+- **Scoring regime** — reuse the item-23 shaped-T3 reward on the 6-instance set
+  (`harness_eval_subset.json`) + the item-20 churn metrics (tool_call_rounds, output tokens,
+  OOM rate, made-edit/P2P-intact), so outcomes are comparable across items 20/23/25/26.
+- **Budget / abort** — the verify loop is longer (extra checks + re-verify) → size from the
+  ~257 s T3 median × the added verify passes via `gepa_budget`; go/no-go before the expensive
+  multi-agent arm, abort → fallback to the single-pass procedural verify arm.
+
+- [x] **28.1 Deep-research survey + framework evaluation — DONE 2026-06-28** (`wf_29a63d03-7d2`:
+      27 sources, 25 claims adversarially verified → 24 confirmed / 1 killed). Surveyed
+      verifier-guided code-gen (LEVER, CodeT, AlphaCodium, self-repair/Olausson), the
+      formal-verification frameworks, LLM+theorem-prover transfer (AlphaProof/DeepSeek-Prover —
+      **Lean/Coq NOT viable for either tier; capability alone does NOT unlock them without a
+      formal spec**), the spec problem (LLM-as-spec-writer; AutoCodeSherpa PBT+symbolic gate is
+      the best SWE-bench-demonstrated pattern, but on a capable online model), and plan→verify→
+      implement multi-agent work. Confirmed the reasoned ranking + 3 refinements (CrossHair up,
+      pyright>mypy, test-signal-gameable). Output: **`docs/formal-verifier-research.md`** (cited,
+      [lit-only]). Key caveat recorded: **no published evidence a verifier helps a 4B local model
+      on repo bug-fixing → 28.3 is the open empirical contribution.**
+- [ ] **28.2 Build the verifier tool + arm configs (NO scored run).** A local, offline
+      verifier tool (ruff/parse + mypy + P2P-regression subset; **F2P withheld, asserted in
+      code**) wired as an opencode tool / code-mode call. Arm configs under
+      `scripts/harness_configs/` on the cand2 base: (a) single-pass procedural verify via
+      `rules_append`; (b) multi-agent planner→verifier→implementer (extends arm-c) with
+      **`"timeout": 900`**; plus a Tier-2 generated-`Hypothesis`-property arm if 28.1 supports
+      it. `gepa_assert_serving_offline` passes on each. Build-time feasibility smoke (does Gemma
+      call the verifier tool + read its result + does it fit memory) — a failed smoke is a
+      recorded wall-confirming null, not an abort. `make check` green + selftest for the new
+      config-load / F2P-isolation / 900 s-timeout-honoured logic.
+- [ ] **28.3 Local A/B on the shaped-T3 set, K≥3 — the actual evidence.** Score the verify arms
+      vs bare + cand2 + (where relevant) item-20 arm-c, with `gepa_t3_shaped_score` + the churn
+      metrics, at the 900 s cap for the multi-agent arms. **Adopt** iff a verify arm lifts the
+      shaped mean past spread **and survives an independent re-val** (item-20 discipline) **OR**
+      materially cuts wasted rollouts/OOM without regressing fixes — **and** the gain is shown
+      **not** to be an F2P leak. Valid outcomes (all closed, per Evidence policy): (i) adopt the
+      verify topology; (ii) partial — verifier improves reliability/churn but not fix-rate;
+      (iii) negative — a verifier stage does not help the weak 4B here (the [lit-only] verdict
+      locally falsified; ties to item-20's "the wall is OOM/capability, not missing checks").
+- [ ] `make check` (ruff + mypy + pytest/selftest) green for any harness/tool code touched;
+      `gepa_assert_serving_offline` asserted on every arm config; F2P-isolation asserted.
+
+### Measurement plan (item 28)
+- **Primary:** item-23 shaped-T3 mean (K≥3) over the 6 T3 instances, unlock rule at the 0.50
+  behavioural ceiling; **adopt gate** = binary F2P flip /6 (full pass/8 held) that survives
+  re-val. **Secondary (the reliability thesis):** tool_call_rounds, output tokens, OOM rate,
+  made-edit / P2P-intact, steps-to-first-edit — does the verifier cut wasted work?
+- **The single lever varied:** the **verification stage** (none → spec-free Tier-1 gate →
+  generated-spec Tier-2). Rules text held at the cand2 base; baselines = bare + cand2 + arm-c.
+- **Timeout:** **900 s** per instance for the multi-agent verify arms (config `timeout` field);
+  600 s for the non-verify reference arms. K≥3 mean + spread per arm.
+- **Gate:** local/offline + 16 GB-fit asserted; `gepa_assert_serving_offline`; **F2P withheld
+  from the verifier, asserted in code**; `make check` green.
+
+### Documentation (item 28)
+- [x] **Added** `docs/item28-lean-probe-notes.md` — the 2026-06-28 Lean feasibility probe
+      (regime B 4B-writes-Lean 3/6, regime C 4B-uses-Opus-spec 4/4 non-discriminating; the
+      proof-gap + Mathlib-cost findings that keep Lean Tier-3 for the verifier role).
+- [ ] **Add** `docs/formal-verifier-research.md` — the 28.1 survey (ranked, feasibility-screened,
+      cited, [lit-only]) + the refreshed framework recommendation.
+- [ ] **Update** `docs/tiered-harness.md` — note item 28 reuses the shaped-T3 + churn metrics and
+      the anti-F2P-leakage rule.
+- [ ] **Update** `docs/opencode-local.md` + `CHANGELOG.md` only when item 28 closes.
+
 ---
 
 ## Notes / open questions
 
-- **Sequencing.** 16 → (18, 19, 20) → (25, 26, 27). Item 16 is the prerequisite: a mechanically
+- **Sequencing.** 16 → (18, 19, 20) → (25, 26, 27, 28). Item 16 is the prerequisite: a mechanically
   broken full harness can't give signal for 19's optimiser or 20's planning A/B. Item 20's
   (ii)-partial close spawned **25** (GEPA-optimise the multi-agent planner prompt — combines
   item 19's GEPA loop with item 20's arm-c topology) and **26** (codegraph-class exploration
   tools to cut the explore-churn / OOM wall that item 20 surfaced); 25 reuses 19+23 machinery,
   26 can stack with 25. **27** (online-optimisee GEPA) generalises 19's loop off the frozen
   local Gemma using item-22's `external_provider` path — BigPickle-as-example, configurable —
-  to test whether GEPA's text-lever findings transfer to a capable model.
+  to test whether GEPA's text-lever findings transfer to a capable model. **28** (formal-verifier
+  stage) also follows item 20: it adds a plan→**verify**→implement loop (extends arm-c's topology
+  with a verifier role) and reuses the item-23 shaped-T3 reward + item-20 churn metrics; runs at a
+  900 s cap as the longer multi-agent shape. 26 and 28 are complementary (26 = better exploration
+  *into* the plan; 28 = a correctness gate *out of* the plan before the edit commits).
   (Item 17's tiered harness is DONE — it supplies the gradient/fitness signal those
   downstream items consume.) **Item 22 is a cheap control that should run early:** it
   proves the full harness is mechanically sound (online BigPickle passes where the
