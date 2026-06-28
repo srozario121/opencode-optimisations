@@ -1,7 +1,9 @@
 # TODO — opencode-optimisations
 
-The repo's running work-ledger. **Item 24 is the only open work** (24 = the
-model-swap survey, added 2026-06-27). **Completed
+The repo's running work-ledger. **Items 24, 25 and 26 are the open work** (24 = the
+model-swap survey, added 2026-06-27; 25 = GEPA-optimise the multi-agent planning prompt;
+26 = evaluate codegraph-class codebase-exploration tools for planning — both added
+2026-06-28, following item 20). **Completed
 items 1–23 now live in `CHANGELOG.md`** (items 18, 19 and 20's
 full ticked detail is also kept inline below for reference). **Item 20 (planning-first /
 orchestration topology) closed 2026-06-28: verdict (ii) PARTIAL — planning-first does not
@@ -1193,12 +1195,142 @@ Open questions for the plan-review pass (do not assume answers):
       outcome (model swap: adopted / partial / rejected) once 24.3 closes.
 - [ ] **Update** `CHANGELOG.md` only when item 24 closes (item-17/19/21 pattern).
 
+### 25. GEPA-optimise the multi-agent PLANNING prompt  ← follows item 20
+
+**Goal.** Item 20 closed (ii) PARTIAL with a tantalising thread: the **multi-agent arm
+(c)** was the **only** arm that ever landed a real T3 fix (`sympy-22714`, the correct
+`evaluate`-guard `point.py` edit, **4/6 over K=6**) — but the win **did not survive
+re-validation** and is **mechanism-incidental**: the `task` tool **never fires**, and the
+gain appears to come from the **`planner`/`coder` subagent DESCRIPTIONS** sitting in
+context as an *accidental goal-style plan scaffold* (not working orchestration). This item
+asks: **if a side-effect of unoptimised planner text already cracks a real fix, can
+deliberately OPTIMISING that planning prompt turn the fragile, incidental win into a robust
+one** — and combine item-19's **GEPA** machinery with item-20's multi-agent topology so the
+planner prompt is *evolved against the local shaped-T3 signal* rather than hand-written.
+
+> **Builds directly on shipped machinery (item 19 + item 20 + item 23).** Reuse the
+> item-19.3 GEPA loop wiring (Opus-4.8 **in-loop reflector**, frozen local Gemma as the
+> optimisee + evaluator, `gepa_assert_serving_offline` on every candidate), the item-23
+> **shaped-T3 reward** as the fitness signal (`gepa_t3_shaped_score`, the 0.50/1.0 two-ceiling
+> `gepa-t3-gate`), and item-20's `plan-arm-c-multiagent` config as the base. The optimised
+> text is the **`planner`/`coder` subagent prompts/descriptions + the orchestration
+> `rules_append`** — all **APPEND/sub-agent text levers**, never the `system_prompt`/
+> `agent.build.prompt` REPLACE channel (item-18 suppression). **Serving stays offline; the
+> reflector lives only in the optimisation loop.**
+
+> **Evidence policy.** GEPA-on-planning is a **hypothesis [lit-only/tool-proposed]** until a
+> local K≥3 A/B closes it. Valid outcomes (all closed): (i) the optimised planner prompt
+> clears the 19.2/23.1 spread test on the shaped signal **AND survives an independent re-val**
+> (the bar item 20's arm c failed) → **adopt**; (ii) it moves the shaped mean but no robust
+> binary flip → partial; (iii) no movement → planning-prompt optimisation does not transfer,
+> a valid closed negative (the multi-agent win stays incidental/unrobust).
+
+**Open questions this item must settle locally:**
+- Does an evolved planner prompt make the `task` tool **actually fire** (real delegation), or
+  does the benefit stay a context-scaffold side-effect even when optimised?
+- Can it convert 22714's **4/6** into a **robust** flip (survives re-val), and/or crack a
+  **second** T3 instance (generalisation beyond the one lucky instance)?
+- Does it do so **without** re-introducing cand2's OOM-churn regression (the planning text
+  must not make the weak 4B churn into the 16 GB wall — item-20's failure mode)?
+
+- [ ] **25.1 Feasibility gate (mirror 19.2/23.1).** Confirm the shaped-T3 signal on the
+      `plan-arm-c-multiagent` base still shows climbable headroom > spread (re-read the K=6
+      arm-c ledger; no new run), and budget the GEPA run from the measured ~455 s/T3-rollout
+      (`gepa_budget`). Abort→fallback if unconverged.
+- [ ] **25.2 GEPA loop over the planner/orchestration text.** Opus-4.8 in-loop reflector
+      proposes edits to the `planner`/`coder` subagent prompts + orchestration `rules_append`;
+      evaluate each candidate K≥3 on the 6-instance T3 set with `gepa_t3_shaped_score`; T1/T2
+      hard gates + tool-call-validity floor hold. `gepa_assert_serving_offline` on every arm.
+- [ ] **25.3 Adopt only if it SURVIVES re-validation** — independent K≥3 re-run (reflector
+      out of the eval path), the win within one spread of the online score AND a robust binary
+      flip (the explicit bar item-20 arm c missed). Counter-arm: a fixed naive planner edit, to
+      keep the negative honest.
+- [ ] `make check` (ruff + mypy + pytest/selftest) green for any harness code touched.
+
+### Measurement plan (item 25)
+- **Climbing signal:** item-23 shaped T3 mean (K≥3) over the 6 T3 instances; **adopt gate:**
+  a binary F2P flip that **survives an independent re-val** + tool-calls valid + no OOM-churn
+  regression. The single lever varied = the **planner/orchestration TEXT** (topology fixed at
+  arm-c multi-agent). Baselines: item-20's `plan-arm-c-multiagent` (incidental win) + bare.
+- **Gate:** `gepa_assert_serving_offline` on every candidate; `make check` green.
+
+### Documentation (item 25)
+- [ ] **Update** `docs/structured-optimisation-research.md` — a §25 extending the GEPA write-up
+      to the multi-agent planning prompt (combines item 19 + 20).
+- [ ] **Update** `docs/orchestration-planning-research.md` — record whether optimising the
+      planner prompt makes the multi-agent mechanism fire / robustifies the 22714 win.
+- [ ] **Update** `docs/opencode-local.md` + `CHANGELOG.md` only when item 25 closes.
+
+### 26. Evaluate codebase-exploration tools (codegraph-class) for planning  ← deep-research + local-eval item
+
+**Goal.** Item 20 located the real bottleneck on this stack: the weak 4B **churns grep/read**
+into longer contexts until it hits the **16 GB / OOM wall** (cand2's T3 regression; 22714's
+OOM/decode variance), and its planning is poorly grounded in repo structure. This item asks
+whether **structure-aware codebase-exploration tools — codegraph-class** (code-graph / call-graph
+indexers, tree-sitter/AST code maps, LSP/`ctags` symbol indexes, repo-map tools à la aider's
+repomap, or an MCP code-graph server) — give the agent **denser structural grounding in fewer
+tokens**, reducing the explore-churn and improving the **plan** quality (and thus the shaped-T3
+signal). Net: does cheaper, structure-aware exploration help PLANNING and lift real fixes?
+
+> **Hard constraints carry through (items 8–11).** Fully **local / offline at serve time**, **16
+> GB M1**, model + serving engine **FROZEN**. Any candidate tool must run **locally and offline**
+> (a local index/graph build is fine; no network at serve time) and integrate as an **opencode
+> tool** (a `.opencode/tools/*.ts` shadow tool or a local MCP server) so it rides the existing
+> harness lever path. A tool that needs the cloud or blows the memory budget is out.
+
+> **Evidence policy.** Every "tool X helps planning" claim is **[lit-only]** from the survey
+> until a **local K≥3 A/B** on the shaped-T3 set closes it. The survey *ranks*; only a
+> harness run *adopts*. Tie the win/no-win to the same shaped-T3 reward items 20/23/25 use, so
+> outcomes are comparable across items.
+
+**Open questions this item must settle:**
+- Which codegraph-class tools are **local-offline + 16 GB-feasible** and exposable as an
+  opencode/MCP tool? (codegraph, tree-sitter code-map, ctags/LSP symbol index, aider-style
+  repomap, sourcegraph-local, etc. — survey + feasibility-screen.)
+- Does giving the agent a **structural map / symbol lookup** instead of raw grep/read **reduce
+  tool-call rounds + output tokens + OOM rate** on the T3 set (the item-20 churn metrics)?
+- Does it **improve the PLAN** specifically — fewer wrong-file edits, faster commit-to-edit,
+  a higher shaped mean — vs the cand2/grep-discipline baseline that *regressed* T3?
+- Does it **stack with item 25** (a structure-grounded planner prompt) for a combined lift?
+
+- [ ] **26.1 Deep-research survey + feasibility screen.** Survey codegraph-class tools; for each
+      record: local/offline?, 16 GB build/serve cost, opencode/MCP integratability, and the
+      claimed planning/exploration benefit (cite). Tag everything **[lit-only]**. Output:
+      `docs/codebase-exploration-tools-research.md` with a ranked, feasibility-screened shortlist.
+- [ ] **26.2 Wire the top 1–2 feasible tools as a harness lever.** A local `.opencode/tools/*.ts`
+      shadow tool (or local MCP) exposing the code-graph/symbol-map; build the index offline;
+      add `scripts/harness_configs/*.json` arm(s) that enable it (text/tool lever only;
+      `gepa_assert_serving_offline` passes). Build-time feasibility smoke (does Gemma call the
+      new tool + does it fit memory) — a failed smoke = recorded wall-confirming null, not abort.
+- [ ] **26.3 Local A/B on the shaped-T3 set, K≥3.** Score vs bare + the grep/read baseline with
+      `gepa_t3_shaped_score` + the item-20 churn metrics (tool_call_rounds, output tokens, OOM
+      rate). Adopt iff it lifts the shaped mean past spread (survives re-val) OR materially cuts
+      churn/OOM without regressing fixes. Valid outcomes (all closed): adopt / partial / negative.
+- [ ] `make check` green for any harness/tool code touched.
+
+### Measurement plan (item 26)
+- **Primary:** item-23 shaped T3 mean (K≥3) over the 6 T3 instances. **Secondary (the churn
+  thesis):** tool_call_rounds, output tokens/episode, OOM rate, steps-to-first-edit — does the
+  structural tool cut the explore-churn that drives the 16 GB wall? Single lever varied = the
+  **exploration tool** (grep/read → codegraph-class). Baselines: bare + cand2 grep-discipline.
+- **Gate:** local/offline + 16 GB-fit asserted; `gepa_assert_serving_offline`; `make check` green.
+
+### Documentation (item 26)
+- [ ] **Add** `docs/codebase-exploration-tools-research.md` — the 26.1 survey (ranked,
+      feasibility-screened, cited, [lit-only]).
+- [ ] **Update** `docs/tiered-harness.md` — note item 26 reuses the shaped-T3 + churn metrics.
+- [ ] **Update** `docs/opencode-local.md` + `CHANGELOG.md` only when item 26 closes.
+
 ---
 
 ## Notes / open questions
 
-- **Sequencing.** 16 → (18, 19, 20). Item 16 is the prerequisite: a mechanically
-  broken full harness can't give signal for 19's optimiser or 20's planning A/B.
+- **Sequencing.** 16 → (18, 19, 20) → (25, 26). Item 16 is the prerequisite: a mechanically
+  broken full harness can't give signal for 19's optimiser or 20's planning A/B. Item 20's
+  (ii)-partial close spawned **25** (GEPA-optimise the multi-agent planner prompt — combines
+  item 19's GEPA loop with item 20's arm-c topology) and **26** (codegraph-class exploration
+  tools to cut the explore-churn / OOM wall that item 20 surfaced); 25 reuses 19+23 machinery,
+  26 can stack with 25.
   (Item 17's tiered harness is DONE — it supplies the gradient/fitness signal those
   downstream items consume.) **Item 22 is a cheap control that should run early:** it
   proves the full harness is mechanically sound (online BigPickle passes where the
