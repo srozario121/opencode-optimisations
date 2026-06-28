@@ -1395,68 +1395,120 @@ models, or any `external_provider` ref), with BigPickle as the default.
 - With BOTH the reflector and the optimisee online, is there any leakage/contamination risk
   to guard (the same gateway model reflecting on its own traces)? Record it.
 
-### Design decisions (to resolve at plan-review — initial spec)
+### Design decisions (resolved — plan-review 2026-06-28)
 
-- **Optimisee model → configurable, BigPickle default.** Add an explicit
-  **online-optimisee mode** keyed off the existing `external_provider`+`model_ref` config
-  fields (reuse `online-bigpickle.json` as the base/default; any online `model_ref` is
-  accepted). The GEPA candidate's serve fields are **pinned** (the reflector may NOT change
-  `model_ref`/`external_provider` — same `GEPA_REFLECTOR_FORBIDDEN_KEYS` rule — so the
-  optimisee model is fixed *per GEPA run* and only the TEXT levers evolve).
-- **Guard split → keep offline as default; add an opt-in online assertion.** Introduce a
-  GEPA-run flag / config (e.g. `--online-optimisee` or an `optimisee_mode: online` field)
-  that, when set, **replaces** `gepa_assert_serving_offline` with `gepa_assert_online_optimisee`
-  (asserts a pinned `external_provider`+`model_ref`, runs `online_preflight`, asserts NO
-  `mlx-local` leak). Default stays offline-asserted → existing items 19/23/25 are byte-unchanged.
-- **Fitness signal → reuse the shaped-T3 reward (`gepa_t3_shaped_score`) on the 6-instance
-  T3 set** (BigPickle has real T3 headroom — 4/8 — so unlike local Gemma the binary F2P flip
-  is a live adopt gate, not a 0/8 wall); the T2 micro reward stays available as the cheap
-  rung. Same λ floor + T1 hard gate + 19.2/23.1 unlock rule (`(cand − base) > spread`).
-- **Budget → online cost/rate-limit aware.** Extend `gepa_budget` (or add an online sibling)
-  so the ceiling is computed from measured per-rollout **latency AND token-cost** on the
-  gateway, with rate-limit backoff; abort→fallback if unconverged or budget exceeded.
+- **Optimisee model → configurable, BigPickle default.** Add an **online-optimisee mode**
+  keyed off the existing `external_provider`+`model_ref` config fields (reuse
+  `online-bigpickle.json` as the base/default; any online `model_ref` is accepted). The GEPA
+  candidate's serve fields are **pinned** (`GEPA_REFLECTOR_FORBIDDEN_KEYS` already forbids the
+  reflector from writing `external_provider`/`model_ref`/`base_url` — verified
+  `harness_eval.py:1577`), so the optimisee model is fixed *per GEPA run* and only the TEXT
+  levers evolve.
+- **Mode selector → reuse `external_provider: true` (no new flag/field).** The mode is read
+  off the *base/run config*, exactly as item 22 already drives the online serve path — when
+  `external_provider` is on the run is online-optimisee, otherwise local. **Reconciles with
+  "no silent mixing"**: mode is set by the base config, and the reflector is *forbidden* to
+  change `external_provider` (frozen key), so the mode is unambiguous *per run*. A
+  local-optimisee run (base `external_provider` false) whose merged candidate smuggles in
+  `external_provider`/`model_ref`/`base_url` still **fails loudly** under the offline guard's
+  existing logic (`harness_eval.py:1589-1595`). *(Rejected: a separate `--online-optimisee`
+  flag / `optimisee_mode` field — redundant with `external_provider`, adds a second source of
+  truth that could disagree with the serve path.)*
+- **Guard split + WIRE BOTH INTO `cmd_run`.** Add `gepa_assert_online_optimisee` (asserts a
+  pinned `external_provider`+`model_ref`, runs `online_preflight` — `harness_eval.py:306` —
+  and asserts NO `mlx-local`/local-`baseURL` leak), and **call the mode-selected guard from
+  `cmd_run` itself** (`harness_eval.py:2356`) so **every real candidate eval is checked**.
+  ⚠ **Gap this fixes:** today `gepa_assert_serving_offline` is invoked **only in selftest**
+  (lines 3061/3067/3222/3240) — `cmd_run` never calls it, so the 19/23 "asserted on every
+  candidate" claim is currently enforced only by the manual driver, not by code. Wiring the
+  guard into `cmd_run` **also retro-hardens the offline path** for items 19/23/25 (behaviour
+  unchanged — offline base configs still serve local Gemma — but the invariant is now
+  enforced, not assumed). Default (no `external_provider`) selects `gepa_assert_serving_offline`.
+- **Fitness signal → shaped-T3 reward (`gepa_t3_shaped_score`, `harness_eval.py:1438`) on the
+  6-instance T3 set** (tier-3 instances 21614/12481/21627/22714/18621/15346 — confirmed in
+  `harness_eval_subset.json`); T2 micro stays the cheap rung. T1 (+T2 where measured) stay
+  hard gates per item 23. **⚠ [lit-only] until 27.2:** the claim "BigPickle has real T3
+  headroom → binary F2P flip is a live adopt gate, not a 0/8 wall" rests on item-22's **4/8**,
+  which was the **mixed 8-instance** subset (T3+T4) at the 240s cap — **NOT** the 6-instance
+  **tier-3-only** fitness set, on which BigPickle has **no recorded baseline**. 27.2 must
+  measure it before the rung/ceiling choice is final.
+- **Unlock ceiling → 1.0 for online mode (NOT the 0.50 behavioural cap).** ⚠ **Bug fixed:**
+  `gepa_t3_gate_check` hard-codes `GEPA_T3_SHAPED_CEILING = 0.50` (`harness_eval.py:1434`) —
+  the *behavioural* ceiling specific to the capability-bound 4B (best a text lever can do when
+  the model can't land F2P flips). A capable optimisee reaches the **+1.0 F2P-flip rung**, so
+  its shaped-T3 mean may already exceed 0.50 → the rule `(0.50 − mean) > spread` goes negative
+  and would **wrongly gate a climbable signal**. **Online mode uses ceiling = 1.0** (the
+  binary F2P-flip ceiling); **local runs keep 0.50 unchanged.** Parameterise the ceiling by
+  mode rather than reusing the constant. `GEPA_T3_ADOPT_CEILING = 1.0` (the separate adopt
+  gate) is unchanged for both modes.
+- **Budget → add latency + rate-limit/network-variance now; token-cost recorded-but-zero.**
+  Extend `gepa_budget` (`harness_eval.py:1675`, currently pure wall-clock
+  `per_rollout_s × n × k`) with an **online dimension**: measured per-rollout **latency**,
+  **rate-limit/retry count**, and **network-variance** handling (retry/backoff + abort on
+  budget or persistent failure). **Token-cost is a recorded-but-zero field** for the free
+  BigPickle default; a **real per-token gateway-cost ceiling is [lit-only]** until a *paid*
+  `model_ref` is actually run on this machine.
+- **Contamination → warn + record, do NOT hard-forbid.** Reflector (Opus-4.8) and the default
+  optimisee (BigPickle, opencode zen gateway) are disjoint, so contamination risk for the
+  default is low. If a user pins the optimisee to the same model family as the reflector,
+  **emit a warning and record the reflector identity + the optimisee `model_ref` in the ledger
+  `notes`** — but allow the run. *(Rejected: a hard optimisee==reflector ban — too rigid, and
+  the disjoint default needs no guard.)*
 - **Text levers only (unchanged).** The reflector still emits ONLY `system_prompt`/
-  `rules_append`/`opencode_config`/`sampling`/`env` text — never the serve fields. Whether
-  REPLACE-vs-APPEND suppression (item 18) reproduces on a *capable* model is itself a finding.
+  `rules_append`/`opencode_config`/`sampling`/`env` text — never the serve fields
+  (`GEPA_REFLECTOR_TEXT_KEYS`, `harness_eval.py:1574`). Whether REPLACE-vs-APPEND suppression
+  (item 18) reproduces on a *capable* model is itself a finding.
 
-- [ ] **27.1 Decouple the optimisee model + add the online-optimisee guard.** Refactor so the
-      GEPA evaluator takes the optimisee `model_ref`/`external_provider` from config (default
-      = `online-bigpickle`); add `gepa_assert_online_optimisee` (pinned ref + `online_preflight`
-      + no-local-leak) selected by an explicit opt-in mode; keep `gepa_assert_serving_offline`
-      as the default for items 19/23/25. Selftest both guards (offline rejects online, online
-      rejects local-leak).
-- [ ] **27.2 Online-GEPA feasibility gate (mirror 19.2).** Confirm the online optimisee shows
-      climbable headroom > spread on the chosen rung (a small K≥3 baseline measure of
-      BigPickle's shaped-T3 / T2 mean + spread); budget the run from measured online
-      latency + token cost (`gepa_budget` online dimension). Abort→fallback if no climbable signal.
-- [ ] **27.3 Run GEPA with the online optimisee.** Opus-4.8 in-loop reflector evolves the
-      text levers; evaluate each candidate K≥3 against the **online** optimisee with
-      `gepa_t3_shaped_score` (T1 hard gate + tool-call floor hold). Compare the winning text
-      to the local-Gemma cand2 (does terse still win on a capable model?). Counter-arm: a fixed
-      naive edit, to keep the negative honest.
+- [ ] **27.1 Decouple the optimisee model + add the online guard, WIRED INTO `cmd_run`.**
+      (a) read the optimisee `model_ref`/`external_provider` from config (default
+      `online-bigpickle`); (b) add `gepa_assert_online_optimisee` (pinned ref + `online_preflight`
+      + no-local-leak); (c) **call the mode-selected guard from `cmd_run`** — online when the
+      base config sets `external_provider`, else `gepa_assert_serving_offline`; (d) keep the
+      offline guard as the default so items 19/23/25 are behaviour-unchanged (now enforced, not
+      just asserted in selftest). Selftest: offline guard rejects a smuggled
+      `external_provider`/`model_ref`/`base_url`; online guard rejects an `mlx-local`/local-`baseURL`
+      leak and accepts the pinned online base; `cmd_run` invokes the correct guard per mode.
+- [ ] **27.2 Online-GEPA feasibility gate (mirror 19.2) — MEASURE the missing baseline first.**
+      K≥3 baseline measure of BigPickle's shaped-T3 mean + spread **on the 6-instance tier-3
+      set** (this closes the [lit-only] headroom claim above). Apply the unlock rule with
+      **ceiling = 1.0** (online mode), not 0.50. Budget the run from measured online **latency +
+      rate-limit/retry count** (`gepa_budget` online dimension; token-cost recorded-as-zero for
+      the free default). Abort→fallback (or close as a negative) if no climbable headroom > spread.
+- [ ] **27.3 Run GEPA with the online optimisee.** Opus-4.8 in-loop reflector evolves the text
+      levers; evaluate each candidate K≥3 against the **online** optimisee with
+      `gepa_t3_shaped_score` (T1 hard gate + tool-call floor hold; `gepa_assert_online_optimisee`
+      on every candidate via `cmd_run`). Compare the winning text to the local-Gemma cand2 (does
+      terse still win on a capable model?). Counter-arm: a fixed naive edit, to keep the negative
+      honest. Record any optimisee==reflector contamination warning in the ledger `notes`.
 - [ ] **27.4 Adopt only if it SURVIVES re-validation** — independent K≥3 re-run (reflector out
-      of the eval path), the win within one spread of the online score. Record whether the
-      result transfers to / differs from the local-optimisee findings.
+      of the eval path), the win within one spread of the online score, binary F2P flip + tool
+      calls valid. Record whether the result transfers to / differs from the local-optimisee
+      findings (the "is terse-wins a 4B artifact?" answer).
 - [ ] `make check` (ruff + mypy + pytest/selftest) green for any harness code touched;
-      `gepa_assert_online_optimisee` (online runs) / `gepa_assert_serving_offline` (local runs)
-      asserted on every candidate.
+      mode-selected guard (`gepa_assert_online_optimisee` online / `gepa_assert_serving_offline`
+      local) asserted in `cmd_run` on every candidate.
 
 ### Measurement plan (item 27)
-- **Climbing signal:** the shaped-T3 mean (K≥3) of the **online optimisee** over the 6 T3
-  instances (T2 micro available as the cheap rung), 19.2/23.1 unlock rule as the A/B test;
-  **adopt gate:** a binary F2P flip + tool-calls valid that **survives an independent re-val**.
+- **Climbing signal:** the shaped-T3 mean (K≥3) of the **online optimisee** over the 6 tier-3
+  instances (T2 micro available as the cheap rung); unlock rule `(ceiling − mean) > spread`
+  with **ceiling = 1.0 for online mode** (0.50 stays the local-mode behavioural cap).
+  **Adopt gate:** a binary F2P flip + tool-calls valid that **survives an independent re-val**.
 - **The single lever varied:** the **text levers** (system/rules/tool text); the optimisee
   model is **fixed per run** (online, configurable; BigPickle default) and the topology is held.
 - **Per-run metrics:** shaped mean + spread, binary F2P /6, made-edit / P2P-intact rate, plus
-  the **online cost dimensions** — per-rollout latency, token cost, rate-limit/retry count.
+  the **online cost dimensions** — per-rollout latency, rate-limit/retry count, network-variance
+  events (token-cost recorded-as-zero for the free default; real cost [lit-only] until a paid
+  ref is run).
 - **Cross-item comparison:** report whether the online-optimised winning text MATCHES or
   DIFFERS from item-19's local cand2 (the "is terse-wins a 4B artifact?" question).
-- **Gate:** `gepa_assert_online_optimisee` on online candidates (default offline guard
-  unchanged for local runs); `make check` green for any code touched.
+- **Gate:** mode-selected guard enforced **in `cmd_run`** on every candidate
+  (`gepa_assert_online_optimisee` online / `gepa_assert_serving_offline` local — the latter now
+  also retro-hardens items 19/23/25); `make check` green for any code touched.
 
 ### Documentation (item 27)
 - [ ] **Update** `docs/structured-optimisation-research.md` — a §27 extending the GEPA
-      write-up to the online-optimisee mode (the guard split, the configurable model, and
+      write-up to the online-optimisee mode (the `external_provider` mode selector, the
+      `cmd_run` guard wiring + offline retro-hardening, the 0.50→1.0 online unlock ceiling, and
       whether the winning text transfers from the local 4B).
 - [ ] **Update** `docs/opencode-local.md` — document the online-GEPA mode + the explicit
       constraint-reframing (analysis-loop capability, never the frozen serve path).
