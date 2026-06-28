@@ -224,3 +224,55 @@ stay **[lit-only]**; the online Stage-1 result is explicitly **[online-probe]** 
 **Tasks removed/changed**: old 25.1/25.2/25.3 → renumbered 25.2/25.3/25.4 (local, now gated behind Stage 1); old single "local-only" framing → two-stage online-first; the Evidence-policy outcomes gained a **fourth** (Stage-1 fails greenlight → close early); 25.3 gained the two-arm transfer comparison + a Gemma-optimal per-model artifact; 25.4 adopt rule pinned to the **Gemma-local** winner (never BigPickle's text unverified).
 **Documentation changes**: `docs/structured-optimisation-research.md` (update — §25 covering the online-first staging, the both-signals greenlight gate, the per-model prompt store + transfer-verification, combining items 19+20+27); `docs/orchestration-planning-research.md` (update — whether the evolved prompt makes `task` FIRE on BigPickle vs Gemma + cross-model transfer); `docs/opencode-local.md` + `CHANGELOG.md` (update — on close only).
 **Key design constraint**: Item 25 is now **two-stage, online-first**: **Stage 1** runs the GEPA-on-planning loop against the **capable online BigPickle optimisee** (reusing item-27.1's `external_provider` online-optimisee machinery, independent of 27.2-27.4) on its **own** newly-measured BigPickle-on-`plan-arm-c-multiagent` 6-instance-T3 baseline at the **1.0 online ceiling**, with a **fixed-naive-edit counter-arm**; it **greenlights Stage 2 iff BOTH the `task` tool actually fires AND the shaped/F2P signal clears spread** — failing either **closes item 25 early without spending the OOM-bound local Gemma budget** (a valid closed negative). The Stage-1 result is **[online-probe] and adopts nothing** — it only greenlights Stage 2 and **seeds** the local reflector. **Stage 2** is the local Gemma GEPA run (offline guard on every candidate) that **explicitly verifies cross-model transfer** (Gemma-from-scratch vs Gemma-seeded-from-BigPickle-optimal), keeps **per-model planner-prompt artifacts** (separate BigPickle-optimal and Gemma-optimal texts — transfer is verified, never assumed), and **only the local re-val (25.4) governs adoption** of the Gemma-local winner. Topology is fixed at arm-c multi-agent; only the planner/coder/orchestration TEXT levers (APPEND/sub-agent, never `system_prompt` REPLACE) evolve. Decisions relayed via the coordinator (2026-06-28); not direct user confirmation.
+
+---
+
+## TODO item 24 — Small-model survey: 4–7B local models vs the Gemma-4-E4B QAT baseline (2026-06-28)
+
+**Ambiguities found**: 7 (5 listed open in the item + 2 integration gaps surfaced by reading
+the serve path). Decisions relayed via the coordinator (relay mode — this agent ran as a
+subagent without `AskUserQuestion`); answers treated as the working spec, not direct user
+confirmation. The 24.1 v2 shortlist stays **[lit-only]** — only the 24.3 local K≥3 run adopts/rejects.
+
+**Code/serve-path verification (before asking):**
+- ✅ Local model selection is at the **serve layer**, not in the lever config: `harness_eval.py`
+  does `served = detect_model(args.base_url)` then `model_ref = mlx-local/<served-path>`
+  (2516-2517); `mlx.sh` picks the model via `MLX_MODEL`/`MLX_REVISION` env (29-31, 67-72) and the
+  served id is the on-disk weights path → a `model-<name>.json` carries sampling/limits/rules ONLY.
+- ✅ `mlx_repair_proxy.py` is **Gemma-4-token-specific** (ports `gemma4.py`: `<|tool_call>` /
+  `<|"|>` / Gemma `enable_thinking` kwarg) — its repair is a no-op/confound on Qwen/Phi output.
+- ✅ `mlx.sh` serves only `uvx --from mlx-lm==0.31.3 mlx_lm.server` (436) — no `mlx_vlm` path
+  exists; the v2 survey flags Qwen3.5 small models as multimodal, possibly `mlx_vlm`-only.
+- ✅ Scoring regime is already constrained by the item text + items 17/23 — confirmed, not re-asked.
+
+| Category | Finding | Resolution |
+|---|---|---|
+| Integration wiring (engine freeze) | Item relaxes the *model* freeze but is silent on the *engine* freeze; Qwen3.5 4-bit builds may need `mlx_vlm`, which `mlx.sh` cannot serve. | **mlx-lm 0.31.3 FIRST; `mlx_vlm` is a GATED FALLBACK.** A candidate that won't load on mlx-lm is a recorded feasibility null; mlx_vlm bring-up happens ONLY if BOTH Qwen3.5 arms null on mlx-lm. Serving substrate stays constant by default. (Q1) |
+| Tool-call reliability / Constraint compliance (proxy) | "Repair proxy stays ON" was written for Gemma; with repair-on it's a no-op/garble risk on non-Gemma tool calls and a confound on the tool-call floor. | **Passthrough (`MLX_PROXY_REPAIR=0`) for non-Gemma** — proxy in path for tracing, repair off, measure tool-call validity on the model's native mlx-lm parser. Per-model repair shim only if a systematic, fixable defect shows in the 24.2 smoke. "Proxy stays ON" reinterpreted as "in path, repair-mode passthrough for non-Gemma". (Q2) |
+| Scope gaps (candidate axis) | Coding-specialised vs general-but-strong was open. | **General-but-strong, current-gen only:** all coding-specialised picks superseded/off-budget → funded shortlist = **Qwen3.5-4B then Qwen3.5-9B** vs the Gemma-4-E4B QAT baseline. **Phi-4-Mini NOT funded** (recorded maybe/null). (Q1/Q3) |
+| Measurement & signal (quant parity) | Hold all candidates to ~4-bit, or best-fit per model with bpw as covariate? | **Best-fit MLX quant per model; effective bpw recorded as a covariate, NOT held constant.** QAT(Gemma)-vs-PTQ(candidates) method difference accepted as recorded; **any negative verdict flagged with the quant-method confound**. (Q4) |
+| Cost & feasibility (budget) | One-model + slow OOM-bound T3 × K × N is expensive; N, K, scoring depth, wall-clock ceiling undecided. | **Full battery up front** (full pass/8 + shaped-T3 + T1/T2 micro), K≥3, 2 candidates, sequential serve/teardown, per-candidate wall-clock ceiling (item-23 `gepa_budget`) + abort. **Qwen3.5-9B flagged as an explicit OOM risk** → null if it OOMs, don't chase. No cheap-gate-first sequencing. (Q3) |
+| Definition of done (24.2 deliverable) | 24.2 deliverable was "a config JSON per candidate" — but the model is chosen at serve time, not in the config. | **24.2 deliverable is a per-candidate SERVE RECIPE** (env + `make mlx-pull` + revision pin into `mlx-models/`) + a sampling/limits/rules `model-<name>.json` + the passthrough-proxy setting; the config does NOT select the model. |
+| Measurement & signal (scoring regime) | Item proposed reusing the item-17/23 tiered harness "(confirm in plan-review)". | **Confirmed unchanged** — T1/T2 micro + 6-instance shaped-T3 + full pass/8, single lever = served model, no new scoring code (served model auto-detected). |
+
+**Tasks added**: rewrote the "Design decisions" block from 5 open questions → 7 resolved
+decisions (added the engine-scope ruling + the proxy-mode ruling as explicit entries); folded
+the per-candidate **serve-recipe** deliverable, the **passthrough-proxy** setting, the
+**mlx-lm-first / mlx_vlm-gated-fallback** null rule, and the **OOM-risk-9B** flag into the 24.2
+and 24.3 bullets; added the proxy-repair-mode nuance to the measurement plan's "single lever" note.
+**Tasks removed/changed**: 24.2 "config JSON pointing at the candidate" → "serve recipe (env/pull/
+revision) + sampling-only config + passthrough proxy"; 24.3 "evaluate on the same tiered harness,
+K≥3" → "FULL battery up front, K≥3, wall-clock ceiling, 9B OOM-null discipline, quant-confound flag
+on negatives"; Phi-4-Mini demoted from shortlist candidate to unfunded recorded-maybe.
+**Documentation changes**: `docs/small-model-selection-research-v2.md` (current shortlist, already
+delivered — no change needed); `docs/opencode-local.md` (update — record item 24's adopt/reject
+outcome on 24.3 close, AND document the non-Gemma passthrough-proxy + mlx-lm-first/mlx_vlm-fallback
+serve rulings); `CHANGELOG.md` (update — on close only). [no new doc created this pass]
+**Key design constraint**: Item 24's funded A/B is **two current-gen candidates — Qwen3.5-4B then
+Qwen3.5-9B — served ONE AT A TIME on the frozen mlx-lm 0.31.3 path** (`mlx_vlm` only as a gated
+fallback if BOTH null), each at its **best-fitting quant with bpw as a recorded covariate**, with the
+**Gemma-token repair proxy switched to passthrough** for these non-Gemma models (tool-call validity
+read off each model's native parser), scored on the **full item-17/23 tiered battery at K≥3 up front**
+against the recorded Gemma-4-E4B QAT baseline; the 9B is an explicit OOM-null risk, any negative verdict
+carries a quant-method-confound flag, and **only the local run adopts/rejects** ([lit-only] survey ranks
+order only). Decisions relayed via the coordinator (2026-06-28); not direct user confirmation.

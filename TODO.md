@@ -1130,28 +1130,59 @@ them for a head-to-head local A/B against the QAT-Gemma-4 baseline.
 > **emit valid tool-calls** is recorded as a **feasibility null** (itself evidence), never
 > silently skipped.
 
-### Design decisions (to be resolved — plan-review pending)
+### Design decisions (resolved — plan-review 2026-06-28)
 
-Open questions for the plan-review pass (do not assume answers):
-
-- **Candidate axis** — coding-specialised (Qwen2.5-Coder-7B, DeepSeek-Coder-6.7B,
-  Codestral-class) vs general-but-strong (Qwen3-4B/8B, Llama-3.x, Phi-class, Granite,
-  newer Gemma siblings)? The 24.1 survey ranks; plan-review picks the shortlist.
-- **Quantisation parity** — to compare *like with like*, do all candidates run at the
-  same effective bit-width band as the QAT-Gemma baseline (≈4-bit), or is each model
-  taken at its best-fitting MLX quant under the 16 GB ceiling (then the bit-width is a
-  recorded covariate, not a held constant)?
-- **Scoring regime** — reuse the item-17 tiered harness (T1/T2 micro + the item-23
-  6-instance shaped-T3 reward + full pass/8) so a candidate is scored on the **exact same
-  rungs** as every prior item. Primary adopt signal = does any candidate move **full
-  pass/8 above 0** (the wall) where Gemma cannot; secondary = shaped-T3 mean + the T1/T2
-  micro gradient. (Confirm in plan-review.)
-- **Feasibility gate (build-time, cheap)** — per candidate, before any scored run:
-  (a) serves on mlx-lm 0.31.3 within the OOM ceiling, (b) emits valid tool-calls through
-  the repair proxy on a 1–2 instance smoke check. Fail (a) or (b) ⇒ recorded null arm.
-- **Budget / sequencing** — one-model-at-a-time + ~257 s-median T3 rollouts × K≥3 ×
-  N-candidates is expensive; plan-review sizes N and the per-candidate wall-clock ceiling
-  (item-23 `gepa_budget` pattern), with abort discipline.
+- **Candidate axis → general-but-strong, current-gen only; shortlist = Qwen3.5-4B then
+  Qwen3.5-9B.** The 24.1 v2 survey settled this: every coding-specialised candidate is
+  superseded (Qwen2.5-Coder-7B, Qwen3-4B) or off-budget (Qwen3-Coder-Next 44.8 GB), so the
+  funded A/B is the two **Qwen3.5 small-dense** models [2026-03-02] against the recorded
+  **Gemma-4-E4B QAT** [2026-06-05] baseline. *Rationale:* same size/serving class, confirmed
+  MLX 4-bit builds, newest small line. **Phi-4-Mini is NOT a funded arm** — recorded maybe/
+  null only (no confirmed MLX build, no agent/tool-calling data to rank it). *(user-confirmed
+  2026-06-28, Q1/Q3.)*
+- **Quantisation parity → best-fit MLX quant per model, bit-width is a recorded covariate
+  (NOT held constant).** Each candidate runs at its best-fitting MLX quant under the 16 GB
+  ceiling; effective bpw is logged alongside tok/s + peak RAM. The **QAT(Gemma)-vs-PTQ/AWQ/
+  mixed(candidates)** method difference is accepted as recorded — and **any negative verdict
+  carries an explicit quant-method-confound flag** (a candidate losing to the QAT baseline
+  may be losing to *quant method*, not architecture). *(user-confirmed 2026-06-28, Q4.)*
+- **Scoring regime → CONFIRMED: reuse the item-17 tiered harness unchanged.** T1/T2 micro +
+  the item-23 6-instance shaped-T3 reward + full pass/8, the **exact same rungs** as every
+  prior item, single lever = the served model. Primary adopt signal = a candidate moves
+  **full pass/8 above 0** (the wall) where Gemma cannot; secondary = shaped-T3 mean (+ spread)
+  + the T1/T2 micro gradient. No new scoring code — the served model is auto-detected by
+  `harness_eval.py` (`detect_model(base_url)` → `mlx-local/<served-path>`), so a candidate is
+  selected at the **serve layer** (`MLX_MODEL=… make mlx-up`), not via a config model field.
+- **Engine scope → mlx-lm 0.31.3 FIRST; `mlx_vlm` is a GATED FALLBACK, not stood up up front.**
+  The Qwen3.5 small models are natively multimodal and their 4-bit builds may require the
+  separate `mlx_vlm` engine (`mlx.sh` serves only `uvx --from mlx-lm==0.31.3 mlx_lm.server`).
+  Ruling: try each candidate on the **frozen mlx-lm 0.31.3** path first; a candidate that will
+  not load there is a **recorded feasibility null**. ONLY if **both** Qwen3.5 arms null on
+  mlx-lm do we spend a separate `mlx_vlm.server` bring-up as explicit follow-up work — the
+  serving substrate stays constant by default. *(user-confirmed 2026-06-28, Q1.)*
+- **Repair-proxy mode → PASSTHROUGH for non-Gemma; the literal "proxy stays ON" is
+  reinterpreted.** `mlx_repair_proxy.py` is Gemma-4-token-specific (ports `gemma4.py` —
+  `<|tool_call>` / `<|"|>` / Gemma `enable_thinking` kwarg), so its repair logic is a no-op
+  (or a confound) on a Qwen/Phi candidate. For every non-Gemma candidate the proxy stays
+  **in path for tracing but with `MLX_PROXY_REPAIR=0` (repair OFF / passthrough)** — tool-call
+  validity is measured on the model's **own native mlx-lm parser output**, apples-to-apples.
+  IF a candidate shows a *systematic, mechanically-fixable* tool-call defect in the 24.2
+  smoke, a **per-model repair shim** is written before its scored run (keeps the tool-call
+  floor honest at extra build cost). The original item's "repair proxy stays ON" constraint is
+  hereby read as **"proxy in path, repair-mode passthrough for non-Gemma"**, NOT repair-on.
+  *(user-confirmed 2026-06-28, Q2.)*
+- **Feasibility gate (build-time, cheap) → per candidate, before any scored run:** (a) serves
+  on **mlx-lm 0.31.3** within the OOM ceiling (mlx_vlm only as the gated fallback above),
+  (b) emits valid tool-calls through the proxy **in passthrough** on a 1–2 instance smoke
+  check. Fail (a) or (b) ⇒ recorded null arm (itself evidence, per the Evidence policy).
+- **Budget / sequencing → FULL up front, 2 candidates × K≥3, with a wall-clock ceiling.** Run
+  the full battery (full pass/8 + shaped-T3 + T1/T2 micro) at **K≥3** on **both** Qwen3.5 arms
+  from the start — no cheap-micro-gate-first sequencing — for the most complete per-arm
+  evidence. One model loaded at a time (sequential serve/eval/teardown). Keep a **per-candidate
+  wall-clock ceiling** (item-23 `gepa_budget` pattern) + abort discipline, and treat the
+  **Qwen3.5-9B as an explicit OOM risk** at the 40–50K-token ceiling (~5.6 GB weights + KV +
+  any thinking-mode blowup — record a feasibility null if it OOMs rather than chasing it).
+  *(user-confirmed 2026-06-28, Q3.)*
 
 - [ ] **24.1 Deep-research survey — DELIVERED 2026-06-27, REFRESHED 2026-06-28.** External
       benchmarks for small (≈4–7B) local coding-agent models gathered, fact-checked, and
@@ -1171,17 +1202,30 @@ Open questions for the plan-review pass (do not assume answers):
       binding dimension is literature-blind → only 24.3 decides it); (b) Qwen3.5 small models
       are natively MULTIMODAL → 4-bit builds may load via `mlx_vlm` not `mlx_lm` (repair-proxy
       / opencode integration check before A/B).
-- [ ] **24.2 Shortlist + feasibility staging (NO scored run).** From the 24.1 ranking pick
-      the shortlist (plan-review), and for each: confirm an MLX (or mlx-lm-loadable) build
-      exists at a quant that fits the 16 GB ceiling, stage a serve recipe (one at a time),
-      and run the cheap feasibility gate (serves + emits valid tool-calls on a 1–2 instance
-      smoke). Deliverable: a `scripts/harness_configs/model-<name>.json` per surviving
-      candidate (provider/model-ref pointing at the locally-served candidate) + a recorded
-      null for any that fail the gate.
+- [ ] **24.2 Shortlist + feasibility staging (NO scored run).** Shortlist resolved by
+      plan-review = **Qwen3.5-4B then Qwen3.5-9B** (Phi-4-Mini not funded). For each: confirm
+      an mlx-lm-loadable build at its **best-fitting quant** under the 16 GB ceiling (record
+      effective bpw), then **stage a per-candidate SERVE RECIPE — not just a config JSON**.
+      The model is selected at the serve layer (`MLX_MODEL=…`/`MLX_REVISION=…` + `make
+      mlx-pull` of the pinned revision into `mlx-models/`), and the harness auto-detects the
+      served id (`detect_model` → `mlx-local/<path>`), so the deliverable per candidate is:
+      (i) the env + pull + **revision pin** recipe, (ii) a `scripts/harness_configs/model-<name>.json`
+      carrying sampling/limits/rules only, and (iii) the **proxy run in passthrough**
+      (`MLX_PROXY_REPAIR=0`) for these non-Gemma models. Feasibility gate (cheap):
+      (a) **serves on mlx-lm 0.31.3** within the OOM ceiling — a model needing `mlx_vlm` is a
+      recorded **null on the mlx-lm path** (mlx_vlm bring-up only if BOTH Qwen3.5 arms null);
+      (b) emits valid tool-calls through the **passthrough** proxy on a 1–2 instance smoke. If
+      a candidate shows a systematic, mechanically-fixable tool-call defect, write a per-model
+      repair shim before 24.3. Fail (a)/(b) ⇒ recorded null arm.
 - [ ] **24.3 Local-harness A/B — the actual evidence.** Serve each shortlisted candidate
-      **sequentially** (one model loaded at a time), evaluate on the **same tiered harness +
-      shaped-T3 reward**, K≥3, vs the **recorded Gemma-4-E4B QAT baseline**. Adopt/reject
-      from the **local numbers**. **Valid outcomes (all closed, per Evidence policy):**
+      **sequentially** (one model loaded at a time, proxy in passthrough for non-Gemma),
+      evaluate the **FULL battery up front** (full pass/8 + item-23 shaped-T3 + T1/T2 micro)
+      at **K≥3** vs the **recorded Gemma-4-E4B QAT baseline**, with a per-candidate wall-clock
+      ceiling (item-23 `gepa_budget`) + abort discipline. **Qwen3.5-9B is an explicit OOM risk**
+      at the 40–50K-token ceiling — record a feasibility null if it OOMs rather than chasing it.
+      Adopt/reject from the **local numbers**; tag any negative verdict with the **quant-method
+      confound** caveat (QAT baseline vs PTQ/AWQ candidate). **Valid outcomes (all closed, per
+      Evidence policy):**
       (i) a candidate moves full pass/8 above 0 (or clears the shaped-T3 spread) → a
       **model swap is the lever**, recommend it; (ii) candidates move the micro/shaped
       gradient but not pass/8 → **partial**, record the rung; (iii) no candidate beats
@@ -1194,7 +1238,12 @@ Open questions for the plan-review pass (do not assume answers):
 - **Baseline:** the recorded Gemma-4-E4B QAT numbers (reuse the item-17/23 baseline
   ledgers; do not re-serve Gemma alongside a candidate).
 - **The single lever varied:** the **served model** (Gemma → candidate). Harness, tiers,
-  shaped reward, repair proxy, sampling defaults held fixed across arms.
+  shaped reward, sampling defaults held fixed across arms. **Proxy nuance (NOT a held
+  constant byte-for-byte):** the proxy stays in path for tracing on every arm, but its
+  **repair-mode differs by necessity** — Gemma baseline = repair ON (its #1096/#1125 fix),
+  non-Gemma candidates = `MLX_PROXY_REPAIR=0` passthrough (Gemma's parser doesn't apply).
+  This is a recorded, intrinsic-to-the-model difference, not an uncontrolled lever; tool-call
+  validity is measured on each model's native parser output.
 - **Per-candidate metrics:** full pass/8, shaped-T3 mean (+ spread), T1/T2 micro fracs,
   made-edit / tool-call-validity rates, tok/s + peak RAM (the deployment-fit covariates),
   and the quant bit-width used. K≥3 mean + spread per candidate.
