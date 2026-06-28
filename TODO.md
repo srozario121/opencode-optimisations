@@ -1222,59 +1222,186 @@ context as an *accidental goal-style plan scaffold* (not working orchestration).
 asks: **if a side-effect of unoptimised planner text already cracks a real fix, can
 deliberately OPTIMISING that planning prompt turn the fragile, incidental win into a robust
 one** — and combine item-19's **GEPA** machinery with item-20's multi-agent topology so the
-planner prompt is *evolved against the local shaped-T3 signal* rather than hand-written.
+planner prompt is *evolved against the shaped-T3 signal* rather than hand-written.
 
-> **Builds directly on shipped machinery (item 19 + item 20 + item 23).** Reuse the
-> item-19.3 GEPA loop wiring (Opus-4.8 **in-loop reflector**, frozen local Gemma as the
-> optimisee + evaluator, `gepa_assert_serving_offline` on every candidate), the item-23
-> **shaped-T3 reward** as the fitness signal (`gepa_t3_shaped_score`, the 0.50/1.0 two-ceiling
-> `gepa-t3-gate`), and item-20's `plan-arm-c-multiagent` config as the base. The optimised
-> text is the **`planner`/`coder` subagent prompts/descriptions + the orchestration
+> **Two-stage structure (online-first, plan-review 2026-06-28).** The item now runs in
+> **two stages**: **Stage 1 (Phase 25.1) is an ONLINE feasibility probe on BigPickle** — run
+> the GEPA-on-planning loop against the **capable** online model FIRST, to separate *"does
+> GEPA-on-planning work MECHANICALLY at all"* from *"does it transfer to the weak local 4B"*,
+> **before** spending the expensive/OOM-bound local Gemma budget. **Stage 2 (Phases
+> 25.2–25.4) is the local Gemma run**, gated behind Stage 1's greenlight. *Rationale:* item 20
+> showed the local arm-c win is fragile and OOM-bound; if optimising the planner prompt cannot
+> even make a *capable* model's `task` tool fire and move the signal, there is no point burning
+> hours of local OOM-bound rollouts to prove it on the 4B.
+
+> **Builds directly on shipped machinery (item 19 + item 20 + item 22/27 + item 23).**
+> Stage 2 reuses the item-19.3 GEPA loop wiring (Opus-4.8 **in-loop reflector**, frozen local
+> Gemma as the optimisee + evaluator, `gepa_assert_serving_offline` on every candidate). **Stage 1
+> reuses item-27.1's shipped online-optimisee machinery** (`gepa_assert_online_optimisee` + the
+> `gepa_assert_optimisee_mode` dispatcher wired into `cmd_run` — `harness_eval.py:1617,1658`;
+> the **1.0 online unlock-ceiling** via `gepa_t3_gate_check(..., online=True)` — `harness_eval.py:1565`;
+> the online `gepa_budget` latency/retry dimension) **plus item-22's `external_provider` path +
+> `online-bigpickle.json`**. Both stages use the item-23 **shaped-T3 reward** as the fitness
+> signal (`gepa_t3_shaped_score`, the `gepa-t3-gate`) on the **same 6-instance T3 set**. The
+> optimised text is the **`planner`/`coder` subagent prompts/descriptions + the orchestration
 > `rules_append`** — all **APPEND/sub-agent text levers**, never the `system_prompt`/
-> `agent.build.prompt` REPLACE channel (item-18 suppression). **Serving stays offline; the
-> reflector lives only in the optimisation loop.**
+> `agent.build.prompt` REPLACE channel (item-18 suppression). **In BOTH stages the GEPA reflector
+> (Opus-4.8) lives only in the optimisation loop; in Stage 2 serving stays local-offline, in
+> Stage 1 the OPTIMISEE is online (BigPickle) while the local MLX stack is off.**
 
 > **Evidence policy.** GEPA-on-planning is a **hypothesis [lit-only/tool-proposed]** until a
-> local K≥3 A/B closes it. Valid outcomes (all closed): (i) the optimised planner prompt
-> clears the 19.2/23.1 spread test on the shaped signal **AND survives an independent re-val**
-> (the bar item 20's arm c failed) → **adopt**; (ii) it moves the shaped mean but no robust
-> binary flip → partial; (iii) no movement → planning-prompt optimisation does not transfer,
-> a valid closed negative (the multi-agent win stays incidental/unrobust).
+> local K≥3 A/B closes it. **Stage 1's online result is a feasibility/soundness probe, tagged
+> [online-probe] — it NEVER adopts anything into the shipped local harness; only the local
+> re-val (25.4) governs adoption.** Valid outcomes (all closed): (i) the LOCAL optimised planner
+> prompt clears the 19.2/23.1 spread test on the shaped signal **AND survives an independent
+> re-val** (the bar item 20's arm c failed) → **adopt**; (ii) it moves the shaped mean but no
+> robust binary flip → partial; (iii) no movement → planning-prompt optimisation does not
+> transfer to the 4B, a valid closed negative (the multi-agent win stays incidental/unrobust).
+> A FOURTH valid closed outcome is **Stage 1 itself failing the greenlight gate** → close item 25
+> early (planning-prompt optimisation is mechanism-inert / signal-flat even on a capable model)
+> WITHOUT spending the local budget.
 
-**Open questions this item must settle locally:**
+**Open questions this item must settle:**
 - Does an evolved planner prompt make the `task` tool **actually fire** (real delegation), or
-  does the benefit stay a context-scaffold side-effect even when optimised?
+  does the benefit stay a context-scaffold side-effect even when optimised? *(Answered first on
+  the capable model in Stage 1 — far more likely to fire there than on the weak 4B.)*
 - Can it convert 22714's **4/6** into a **robust** flip (survives re-val), and/or crack a
   **second** T3 instance (generalisation beyond the one lucky instance)?
 - Does it do so **without** re-introducing cand2's OOM-churn regression (the planning text
   must not make the weak 4B churn into the 16 GB wall — item-20's failure mode)?
+- **Does the OPTIMAL planner prompt TRANSFER across models?** BigPickle's optimal planner text
+  is NOT assumed to be Gemma's — it is a per-model artifact. Stage 2 explicitly *verifies*
+  whether seeding Gemma's GEPA from BigPickle's optimal prompt beats Gemma optimising from the
+  arm-c base / from scratch.
 
-- [ ] **25.1 Feasibility gate (mirror 19.2/23.1).** Confirm the shaped-T3 signal on the
+### Design decisions (resolved — plan-review 2026-06-28)
+
+- **Online-first staging → Stage 1 is a BigPickle feasibility probe that GATES Stage 2.** Run
+  GEPA-on-planning against the capable online optimisee first (`opencode/big-pickle`, item 22's
+  `external_provider` path). *Rationale:* cheap-and-fast (240s cap, fast gateway) vs the local
+  ~455 s/OOM-bound T3 rollouts; it isolates "does optimising the planner prompt work mechanically
+  at all" from "does it transfer to the 4B". A Stage-1 failure closes item 25 before any local
+  budget is spent. *(user-confirmed 2026-06-28, Q1/Q2.)*
+- **Greenlight gate = BOTH signals required (strictest).** Stage 1 greenlights Stage 2 **iff**
+  (a) the `task` tool **ACTUALLY FIRES** (real delegation, not the inert context-scaffold side-
+  effect item 20 saw) **AND** (b) the **shaped-T3 mean / F2P signal MOVES** on BigPickle (clears
+  the spread test at the **1.0 online ceiling**, or a robust F2P flip). If EITHER fails
+  (mechanism inert OR signal flat on a capable model) → **close item 25 without spending the
+  local Gemma budget.** *(user-confirmed 2026-06-28, Q2.)*
+- **Baseline → same 6-instance T3 set, with a NEW BigPickle-on-`plan-arm-c-multiagent` baseline
+  measured INSIDE Stage 1.** The 6-instance tier-3 set (21614/12481/21627/22714/18621/15346,
+  `harness_eval_subset.json`) is held across both stages for comparability. ⚠ **Item 22's 4/8 is
+  NOT this baseline** — it was the mixed 8-instance T3+T4 subset on the *bare* config at the 240s
+  cap. Stage 1 measures its OWN BigPickle-on-arm-c-multiagent baseline (online mode, ceiling 1.0);
+  it does **not** reuse item 27.2's (generic, non-arm-c) baseline and does **not** block on it.
+  *(user-confirmed 2026-06-28, Q3.)*
+- **Item-27 relationship → REUSE 27.1's machinery, run INDEPENDENTLY of 27.2–27.4.** Stage 1 is
+  planning-specific (arm-c topology + planner/coder text) and rides item-27.1's shipped online-
+  optimisee path (`gepa_assert_online_optimisee`, mode dispatcher, 1.0 ceiling, online budget —
+  all DONE). It does NOT depend on item 27.2/27.3/27.4. The overlap (both run GEPA against
+  BigPickle) is noted in docs so neither double-pays, but item 25 measures its own arm-c baseline.
+  *(user-confirmed 2026-06-28, Q4.)*
+- **Online result status → [online-probe], NEVER a ship/adopt.** A positive Stage-1 result can
+  greenlight Stage 2 and **seed the local reflector** (BigPickle's optimal planner text becomes an
+  *input* to Stage 2), but it adopts NOTHING into the shipped local harness. Only the local
+  re-val (25.4) governs adoption. Tag every Stage-1 finding **[online-probe]**. *(user-confirmed
+  2026-06-28, Q5.)*
+- **Counter-arm in Stage 1 (validates the negative on a capable model).** Build a **fixed naive
+  planner edit** arm vs the arm-c base on BigPickle, so a "GEPA-on-planning doesn't help even a
+  capable model" negative is **measured, not assumed** (Evidence policy). *(user-confirmed
+  2026-06-28, Q6.)*
+- **Per-model planner-prompt store + EXPLICIT Gemma transfer-verification (supersedes naive
+  transfer).** Maintain **separate optimal planner prompts PER MODEL** (a BigPickle-optimal text
+  AND a Gemma-optimal text). Gemma does **NOT** inherit BigPickle's prompt directly — it may use
+  it as an INPUT/seed, but **whether the planner prompt transfers must be explicitly VERIFIED on
+  the local Gemma**. Stage 2 includes a transfer-verification arm: *does seeding Gemma's GEPA from
+  BigPickle's optimal prompt beat Gemma optimising from the arm-c base / from scratch?* The
+  adopted Gemma lever is whichever Gemma-local arm survives re-val — never the BigPickle text
+  unverified. *(user-confirmed 2026-06-28, Q7.)*
+- **arm-c needs an online variant config.** `plan-arm-c-multiagent` re-enables `task` + defines
+  `planner`/`coder` subagents via raw `opencode_config` (no `mlx-local` block). Stage 1 needs an
+  `external_provider`+`model_ref: opencode/big-pickle` variant (e.g. `plan-arm-c-multiagent-online`)
+  that passes `gepa_assert_online_optimisee` (no local-serve leak). The `task`/subagent machinery
+  is opencode-side (provider-agnostic) → a build-time feasibility smoke confirms BigPickle emits
+  valid tool-calls AND that `task` can fire under the online provider before the GEPA loop runs.
+
+#### Stage 1 — ONLINE BigPickle feasibility probe (gates Stage 2)  [online-probe]
+
+- [ ] **25.1a Build the online arm-c config + feasibility smoke.** Add
+      `scripts/harness_configs/plan-arm-c-multiagent-online.json` (= `plan-arm-c-multiagent`
+      base + `external_provider: true` + `model_ref: opencode/big-pickle` + the provider-
+      appropriate sampling/timeout from `online-bigpickle.json`); assert it passes
+      `gepa_assert_online_optimisee` (no `mlx-local`/local-`baseURL` leak). Build-time smoke on
+      one instance: BigPickle emits valid structured tool-calls AND the `task` tool CAN fire
+      under the online provider (a precondition for the greenlight gate). A failed smoke = a
+      recorded wall-confirming null, not a silent skip.
+- [ ] **25.1b Measure the BigPickle-on-arm-c baseline + budget the run.** K≥3 baseline of
+      BigPickle's shaped-T3 mean + spread on the 6-instance T3 set under
+      `plan-arm-c-multiagent-online` (this is the item-25-OWN baseline; do NOT reuse 27.2's
+      generic one). Apply the unlock rule at **ceiling = 1.0** (online mode). Budget from
+      measured online **latency + rate-limit/retry** (`gepa_budget` online dimension; token-cost
+      recorded-as-zero for the free default). Abort→close-as-negative if no climbable headroom.
+- [ ] **25.1c Run GEPA-on-planning against the ONLINE optimisee + counter-arm.** Opus-4.8 in-loop
+      reflector evolves the `planner`/`coder` subagent prompts + orchestration `rules_append`;
+      evaluate each candidate K≥3 against BigPickle with `gepa_t3_shaped_score`;
+      `gepa_assert_online_optimisee` on every candidate via `cmd_run`. **Counter-arm:** a fixed
+      naive planner edit vs the arm-c base. Record whether **`task` actually fires** per candidate.
+      Output: **BigPickle's optimal planner prompt** stored as a per-model artifact (e.g.
+      `scripts/harness_configs/plan-arm-c-bigpickle-optimal.json`), tagged **[online-probe]**.
+- [ ] **25.1d GREENLIGHT DECISION (the gate).** Greenlight Stage 2 **iff** (a) `task` actually
+      fired under the evolved prompt **AND** (b) the shaped/F2P signal moved past spread at
+      ceiling 1.0. **If either fails → CLOSE item 25 here** (planning-prompt optimisation is
+      mechanism-inert or signal-flat even on a capable model — a valid closed negative, no local
+      Gemma budget spent). Record the verdict + both signals in the ledger `notes`.
+
+#### Stage 2 — LOCAL Gemma run (only if Stage 1 greenlights)
+
+- [ ] **25.2 Local feasibility gate (mirror 19.2/23.1).** Confirm the shaped-T3 signal on the
       `plan-arm-c-multiagent` base still shows climbable headroom > spread (re-read the K=6
-      arm-c ledger; no new run), and budget the GEPA run from the measured ~455 s/T3-rollout
-      (`gepa_budget`). Abort→fallback if unconverged.
-- [ ] **25.2 GEPA loop over the planner/orchestration text.** Opus-4.8 in-loop reflector
-      proposes edits to the `planner`/`coder` subagent prompts + orchestration `rules_append`;
-      evaluate each candidate K≥3 on the 6-instance T3 set with `gepa_t3_shaped_score`; T1/T2
-      hard gates + tool-call-validity floor hold. `gepa_assert_serving_offline` on every arm.
-- [ ] **25.3 Adopt only if it SURVIVES re-validation** — independent K≥3 re-run (reflector
-      out of the eval path), the win within one spread of the online score AND a robust binary
-      flip (the explicit bar item-20 arm c missed). Counter-arm: a fixed naive planner edit, to
-      keep the negative honest.
-- [ ] `make check` (ruff + mypy + pytest/selftest) green for any harness code touched.
+      arm-c ledger; no new run), and budget the local GEPA run from the measured ~455 s/T3-rollout
+      (`gepa_budget`). Abort→fallback if unconverged. `gepa_assert_serving_offline` on every arm.
+- [ ] **25.3 Local GEPA loop over the planner/orchestration text + TRANSFER-VERIFICATION.**
+      Opus-4.8 in-loop reflector proposes edits to the `planner`/`coder` subagent prompts +
+      orchestration `rules_append`; evaluate each candidate K≥3 on the 6-instance T3 set with
+      `gepa_t3_shaped_score`; T1/T2 hard gates + tool-call-validity floor hold;
+      `gepa_assert_serving_offline` on every arm. **Run TWO Gemma optimisation arms and compare:**
+      (i) Gemma GEPA from the arm-c base (from scratch), and (ii) Gemma GEPA **seeded from
+      BigPickle's optimal planner prompt** (Stage 1 output as an input, NOT adopted directly).
+      The transfer question = does seeding help vs from-scratch? Produce a **Gemma-optimal planner
+      prompt** as its own per-model artifact (distinct from BigPickle's).
+- [ ] **25.4 Adopt only if it SURVIVES re-validation** — independent K≥3 re-run (reflector out of
+      the eval path), the win within one spread of the in-loop score AND a robust binary flip
+      (the explicit bar item-20 arm c missed), tool-calls valid, no OOM-churn regression. The
+      adopted lever is the **Gemma-local** winner (whichever of from-scratch / seeded survives) —
+      never BigPickle's text unverified. Counter-arm: a fixed naive planner edit, to keep the
+      negative honest.
+- [ ] `make check` (ruff + mypy + pytest/selftest) green for any harness code touched
+      (new online arm-c config loader / feasibility-smoke / per-model artifact handling).
 
 ### Measurement plan (item 25)
-- **Climbing signal:** item-23 shaped T3 mean (K≥3) over the 6 T3 instances; **adopt gate:**
-  a binary F2P flip that **survives an independent re-val** + tool-calls valid + no OOM-churn
-  regression. The single lever varied = the **planner/orchestration TEXT** (topology fixed at
-  arm-c multi-agent). Baselines: item-20's `plan-arm-c-multiagent` (incidental win) + bare.
-- **Gate:** `gepa_assert_serving_offline` on every candidate; `make check` green.
+- **Stage 1 (online, [online-probe]):** BigPickle shaped-T3 mean (K≥3) on the 6 T3 instances at
+  **ceiling 1.0** + a `task`-fired flag per candidate. **Greenlight gate = BOTH** task-fires AND
+  signal-moves-past-spread; fail either → close item 25. Own arm-c baseline measured in 25.1b;
+  counter-arm = fixed naive planner edit. Online cost dims (latency, rate-limit/retry; token-cost
+  =0 for the free default). Guard: `gepa_assert_online_optimisee` via `cmd_run` on every candidate.
+- **Stage 2 (local, governs adoption):** item-23 shaped T3 mean (K≥3) over the 6 T3 instances;
+  **adopt gate:** a binary F2P flip that **survives an independent re-val** + tool-calls valid +
+  no OOM-churn regression. The single lever varied = the **planner/orchestration TEXT** (topology
+  fixed at arm-c multi-agent). Baselines: item-20's `plan-arm-c-multiagent` + bare. **Transfer
+  arm:** Gemma-from-scratch vs Gemma-seeded-from-BigPickle-optimal. Guard:
+  `gepa_assert_serving_offline` on every candidate.
+- **Per-model artifact store:** a BigPickle-optimal planner prompt (Stage 1) AND a Gemma-optimal
+  planner prompt (Stage 2) — kept SEPARATE; transfer is verified, never assumed.
+- **Gate:** the mode-selected guard enforced in `cmd_run` on every candidate; `make check` green.
 
 ### Documentation (item 25)
 - [ ] **Update** `docs/structured-optimisation-research.md` — a §25 extending the GEPA write-up
-      to the multi-agent planning prompt (combines item 19 + 20).
+      to the multi-agent planning prompt (combines item 19 + 20 + 27), documenting the online-first
+      staging, the both-signals greenlight gate, and the per-model prompt store + transfer-
+      verification result.
 - [ ] **Update** `docs/orchestration-planning-research.md` — record whether optimising the
-      planner prompt makes the multi-agent mechanism fire / robustifies the 22714 win.
+      planner prompt makes the multi-agent `task` mechanism FIRE (Stage 1 on BigPickle vs Stage 2
+      on Gemma) / robustifies the 22714 win, and whether the optimal prompt transfers across models.
 - [ ] **Update** `docs/opencode-local.md` + `CHANGELOG.md` only when item 25 closes.
 
 ### 26. Evaluate codebase-exploration tools (codegraph-class) for planning  ← deep-research + local-eval item
@@ -1459,15 +1586,23 @@ models, or any `external_provider` ref), with BigPickle as the default.
   (`GEPA_REFLECTOR_TEXT_KEYS`, `harness_eval.py:1574`). Whether REPLACE-vs-APPEND suppression
   (item 18) reproduces on a *capable* model is itself a finding.
 
-- [ ] **27.1 Decouple the optimisee model + add the online guard, WIRED INTO `cmd_run`.**
-      (a) read the optimisee `model_ref`/`external_provider` from config (default
-      `online-bigpickle`); (b) add `gepa_assert_online_optimisee` (pinned ref + `online_preflight`
-      + no-local-leak); (c) **call the mode-selected guard from `cmd_run`** — online when the
-      base config sets `external_provider`, else `gepa_assert_serving_offline`; (d) keep the
-      offline guard as the default so items 19/23/25 are behaviour-unchanged (now enforced, not
-      just asserted in selftest). Selftest: offline guard rejects a smuggled
-      `external_provider`/`model_ref`/`base_url`; online guard rejects an `mlx-local`/local-`baseURL`
-      leak and accepts the pinned online base; `cmd_run` invokes the correct guard per mode.
+- [x] **27.1 Decouple the optimisee model + add the online guard, WIRED INTO `cmd_run`.** —
+      **DONE (2026-06-28).** (a) `cmd_run` resolves the optimisee ref from `--model`→config
+      `model_ref` and pins it back into `cfg` as the single source of truth; (b) added
+      `gepa_assert_online_optimisee` (pinned `external_provider`+`model_ref`, `online_preflight`
+      gated on `preflight=`, no `mlx-local`/local-`baseURL` leak) + the
+      `gepa_assert_optimisee_mode` dispatcher; (c) **both branches of `cmd_run` now call the
+      mode-selected guard on every candidate eval** — online when the base config sets
+      `external_provider`, else `gepa_assert_serving_offline` (the online branch's bare
+      `online_preflight` is now subsumed by the guard); (d) the offline guard is the default and
+      now **enforced in `cmd_run`** (was selftest-only) → retro-hardens items 19/23/25,
+      behaviour unchanged (all 19 shipped offline configs verified to pass the guard). **Also
+      landed (design-decision code):** the **0.50→1.0 online unlock-ceiling fix** —
+      `gepa_t3_gate_check(..., online=)` parameterises the ceiling by mode (`--online` flag on
+      `gepa-t3-gate`), and `gepa_budget(..., online=)` adds the latency/retry/network-variance/
+      token-cost(=0) sub-block. Selftest: 5 new item-27 checks (online guard accept + 4 rejects,
+      mode dispatcher routing, the ceiling bug-fix, the online budget sub-block) — all green;
+      `make check` clean across all 10 files.
 - [ ] **27.2 Online-GEPA feasibility gate (mirror 19.2) — MEASURE the missing baseline first.**
       K≥3 baseline measure of BigPickle's shaped-T3 mean + spread **on the 6-instance tier-3
       set** (this closes the [lit-only] headroom claim above). Apply the unlock rule with
@@ -1484,9 +1619,11 @@ models, or any `external_provider` ref), with BigPickle as the default.
       of the eval path), the win within one spread of the online score, binary F2P flip + tool
       calls valid. Record whether the result transfers to / differs from the local-optimisee
       findings (the "is terse-wins a 4B artifact?" answer).
-- [ ] `make check` (ruff + mypy + pytest/selftest) green for any harness code touched;
+- [x] `make check` (ruff + mypy + pytest/selftest) green for any harness code touched;
       mode-selected guard (`gepa_assert_online_optimisee` online / `gepa_assert_serving_offline`
-      local) asserted in `cmd_run` on every candidate.
+      local) asserted in `cmd_run` on every candidate. — **DONE (2026-06-28)** with 27.1 (ruff
+      clean, mypy clean across 10 files, selftest OK incl. 5 new item-27 checks). *(Re-confirm on
+      close after 27.2–27.4 add any code.)*
 
 ### Measurement plan (item 27)
 - **Climbing signal:** the shaped-T3 mean (K≥3) of the **online optimisee** over the 6 tier-3
@@ -1506,12 +1643,16 @@ models, or any `external_provider` ref), with BigPickle as the default.
   also retro-hardens items 19/23/25); `make check` green for any code touched.
 
 ### Documentation (item 27)
-- [ ] **Update** `docs/structured-optimisation-research.md` — a §27 extending the GEPA
-      write-up to the online-optimisee mode (the `external_provider` mode selector, the
-      `cmd_run` guard wiring + offline retro-hardening, the 0.50→1.0 online unlock ceiling, and
-      whether the winning text transfers from the local 4B).
-- [ ] **Update** `docs/opencode-local.md` — document the online-GEPA mode + the explicit
-      constraint-reframing (analysis-loop capability, never the frozen serve path).
+- [x] **Update** `docs/structured-optimisation-research.md` — **DONE (2026-06-28, machinery
+      part).** New §27: the `external_provider` mode selector, `gepa_assert_online_optimisee` +
+      the `gepa_assert_optimisee_mode` dispatcher, the `cmd_run` guard wiring + offline
+      retro-hardening, the 0.50→1.0 online unlock ceiling, the online budget dimension, and the
+      27.2–27.4 pending runs. *(The "does the winning text transfer from the local 4B?" answer is
+      filled in by 27.3/27.4.)*
+- [x] **Update** `docs/opencode-local.md` — **DONE (2026-06-28).** New *GEPA against an ONLINE
+      optimisee (item 27)* section: the online-GEPA mode, the explicit constraint-reframing
+      (analysis-loop capability, never the frozen serve path), the mode-selected `cmd_run` guard,
+      the 1.0 online ceiling, the budget dimension, and the commands.
 - [ ] **Update** `CHANGELOG.md` only when item 27 closes.
 
 ---
