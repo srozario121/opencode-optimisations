@@ -1,9 +1,10 @@
 # TODO — opencode-optimisations
 
-The repo's running work-ledger. **Items 24, 25 and 26 are the open work** (24 = the
+The repo's running work-ledger. **Items 24, 25, 26 and 27 are the open work** (24 = the
 model-swap survey, added 2026-06-27; 25 = GEPA-optimise the multi-agent planning prompt;
 26 = evaluate codegraph-class codebase-exploration tools for planning — both added
-2026-06-28, following item 20). **Completed
+2026-06-28, following item 20; 27 = extend GEPA to optimise ONLINE optimisee models
+(BigPickle-as-example, configurable), added 2026-06-28). **Completed
 items 1–23 now live in `CHANGELOG.md`** (items 18, 19 and 20's
 full ticked detail is also kept inline below for reference). **Item 20 (planning-first /
 orchestration topology) closed 2026-06-28: verdict (ii) PARTIAL — planning-first does not
@@ -1151,11 +1152,24 @@ Open questions for the plan-review pass (do not assume answers):
   N-candidates is expensive; plan-review sizes N and the per-candidate wall-clock ceiling
   (item-23 `gepa_budget` pattern), with abort discipline.
 
-- [ ] **24.1 Deep-research survey — DELIVERED 2026-06-27** (this session). External
+- [ ] **24.1 Deep-research survey — DELIVERED 2026-06-27, REFRESHED 2026-06-28.** External
       benchmarks for small (≈4–7B) local coding-agent models gathered, fact-checked, and
       synthesised into a ranked shortlist with MLX-availability + 16 GB-fit notes.
-      Report: **`docs/small-model-selection-research.md`**. Verdict tagged **[lit-only]**
-      per the Evidence policy — a ranking, not an adoption; 24.3 is its local validation.
+      Reports: v1 **`docs/small-model-selection-research.md`** (2026-06-27) and the
+      latest-release **v2 `docs/small-model-selection-research-v2.md`** (2026-06-28, current).
+      **v2 supersedes v1's shortlist:** the field turned over generationally — **all four
+      v1 picks are now superseded or off-budget** (Qwen2.5-Coder-7B & Qwen3-4B → superseded
+      by the **Qwen3.5 small series** released 2026-03-02; Yi-Coder-9B / xLAM-2-3b-fc-r not
+      re-confirmed). Gemma 3 correctly excluded — incumbent is **Gemma 4** (Gemma-4-E4B QAT
+      released 2026-06-05, supersedes Gemma 3, valid current-gen baseline). **Refreshed
+      shortlist (release dates recorded per candidate):** (1) Qwen3.5-9B [2026-03-02],
+      (2) Qwen3.5-4B [2026-03-02], baseline Gemma-4-E4B QAT [2026-06-05], Phi-4-Mini a weak
+      maybe. Verdict tagged **[lit-only]** per the Evidence policy — a ranking, not an
+      adoption; 24.3 is its local validation. **Two 24.2 gate items surfaced:** (a) NO
+      external multi-turn tool-calling benchmark survived verification for ANY candidate (the
+      binding dimension is literature-blind → only 24.3 decides it); (b) Qwen3.5 small models
+      are natively MULTIMODAL → 4-bit builds may load via `mlx_vlm` not `mlx_lm` (repair-proxy
+      / opencode integration check before A/B).
 - [ ] **24.2 Shortlist + feasibility staging (NO scored run).** From the 24.1 ranking pick
       the shortlist (plan-review), and for each: confirm an MLX (or mlx-lm-loadable) build
       exists at a quant that fits the 16 GB ceiling, stage a serve recipe (one at a time),
@@ -1188,9 +1202,11 @@ Open questions for the plan-review pass (do not assume answers):
 
 ### Documentation (item 24)
 
-- [ ] **Add** `docs/small-model-selection-research.md` — the 24.1 survey (DONE this
-      session): ranked candidates, external benchmarks with citations, MLX/quant/16 GB-fit
-      notes, the [lit-only] tag.
+- [ ] **Add** `docs/small-model-selection-research.md` (v1, 2026-06-27) **and**
+      `docs/small-model-selection-research-v2.md` (v2, 2026-06-28, current) — the 24.1
+      survey: ranked candidates, external benchmarks with citations, MLX/quant/16 GB-fit
+      notes, per-candidate release dates, the [lit-only] tag. **v2 is the live shortlist;
+      v1 is retained for history.**
 - [ ] **Update** `docs/opencode-local.md` (master doc) — record item 24's adopt/reject
       outcome (model swap: adopted / partial / rejected) once 24.3 closes.
 - [ ] **Update** `CHANGELOG.md` only when item 24 closes (item-17/19/21 pattern).
@@ -1321,16 +1337,143 @@ signal). Net: does cheaper, structure-aware exploration help PLANNING and lift r
 - [ ] **Update** `docs/tiered-harness.md` — note item 26 reuses the shaped-T3 + churn metrics.
 - [ ] **Update** `docs/opencode-local.md` + `CHANGELOG.md` only when item 26 closes.
 
+### 27. Extend GEPA to optimise ONLINE optimisee models  ← generalises items 19/23/25
+
+**Goal.** Today the GEPA machinery (items 19/23/25) is **hard-wired to the frozen local
+Gemma as the optimisee**: `gepa_assert_serving_offline` (`harness_eval.py:1581`) *rejects*
+any candidate that flips `external_provider`/`model_ref`/`base_url`, so the model the
+harness **evaluates** can only ever be the offline 4B. This item adds the capability to
+run the **same GEPA loop with an ONLINE model as the optimisee** — i.e. evolve prompt/text
+levers *against a strong hosted model's* shaped-T3 / T2 signal, not just the weak local one.
+**`opencode/big-pickle` is the worked example** (item 22 already proved the harness can
+evaluate it end-to-end — 4/8 on the frozen T3 subset, scorer reads real pytest results),
+but the online optimisee must be **configurable to any online `model_ref`** (other opencode-zen
+models, or any `external_provider` ref), with BigPickle as the default.
+
+> **Why this is worth doing.** Every GEPA result so far is entangled with the **16 GB / 4B
+> capability wall**: item 19 found prompt *length* dominates a weak model; items 20/23 found
+> the T3 wall holds under shaping; item 18 found gutting the prompt suppresses tool use. We
+> have **never measured whether GEPA's text-lever optimisation generalises to a *capable*
+> model** — is "terse helps / verbose hurts" a 4B artifact, or a real harness property? An
+> online optimisee with genuine T3 headroom (BigPickle lands real fixes) is the control that
+> answers it: it tells us whether the optimised text levers we ship are **model-specific** or
+> **transferable**, and gives a second, capability-unconstrained fitness surface for GEPA to
+> climb. It also makes the GEPA tooling **reusable** beyond this one frozen stack.
+
+> **Builds on shipped machinery (item 19 + item 22).** Reuse the item-19.3 GEPA loop
+> (Opus-4.8 in-loop reflector, shaped/T2 fitness, K≥3 + re-val discipline, λ floor + T1 hard
+> gate) and item-22's **`external_provider` path** (`apply_levers` writes no `mlx-local`
+> block; `cmd_run` skips `server_healthy`/`detect_model`/OOM-probe; `online_preflight`
+> auth+network check replaces the MLX health-check — `harness_eval.py:306,414,990`). The new
+> work is **decoupling the optimisee model from the serve-offline assumption**, cleanly and
+> opt-in.
+
+> **Constraint reframing (explicit, not hidden).** Items 8–11's "fully local / offline at
+> serve time" constraint binds the **shipping local harness**, NOT this item. Online-GEPA is
+> an **analysis/optimisation-loop capability** (like the cloud reflector already is) — it
+> **never touches the frozen local serve path**. So `gepa_assert_serving_offline` is NOT
+> deleted; it stays the default and the guard for local-optimisee runs. Online-GEPA is a
+> **separate, explicitly opted-in mode** that swaps the offline assertion for item-22's
+> `online_preflight` + a pinned-`model_ref` assertion. The two modes must not silently mix
+> (a local-optimisee run that smuggles `external_provider` still fails loudly).
+
+> **Evidence policy.** "GEPA generalises to online models" is a **hypothesis [lit-only]**
+> until a local-driven A/B closes it. Valid outcomes (all closed): (i) an evolved candidate
+> clears the spread test on the online optimisee's shaped/T2 signal **and survives re-val** →
+> the loop works for online models (and we learn whether the winning text matches or differs
+> from the local cand2); (ii) it moves the signal but no robust win → partial; (iii) no
+> movement → GEPA's text levers don't help a capable model either (a valid closed negative
+> that *strengthens* the "capability, not prompt" framing).
+
+**Open questions this item must settle:**
+- Does the optimal text lever for a **capable** optimisee match item-19's cand2 (terse
+  wins), or does a strong model prefer richer guidance (i.e. is "terse helps" a 4B artifact)?
+- Does running GEPA against an online optimisee change the **cost model** the loop must
+  respect — per-token gateway cost + rate-limits + network variance replace the wall-clock /
+  OOM ceiling that bounds local runs — and does the budgeter (`gepa_budget`) need an online
+  cost/rate-limit dimension rather than pure wall-clock?
+- With BOTH the reflector and the optimisee online, is there any leakage/contamination risk
+  to guard (the same gateway model reflecting on its own traces)? Record it.
+
+### Design decisions (to resolve at plan-review — initial spec)
+
+- **Optimisee model → configurable, BigPickle default.** Add an explicit
+  **online-optimisee mode** keyed off the existing `external_provider`+`model_ref` config
+  fields (reuse `online-bigpickle.json` as the base/default; any online `model_ref` is
+  accepted). The GEPA candidate's serve fields are **pinned** (the reflector may NOT change
+  `model_ref`/`external_provider` — same `GEPA_REFLECTOR_FORBIDDEN_KEYS` rule — so the
+  optimisee model is fixed *per GEPA run* and only the TEXT levers evolve).
+- **Guard split → keep offline as default; add an opt-in online assertion.** Introduce a
+  GEPA-run flag / config (e.g. `--online-optimisee` or an `optimisee_mode: online` field)
+  that, when set, **replaces** `gepa_assert_serving_offline` with `gepa_assert_online_optimisee`
+  (asserts a pinned `external_provider`+`model_ref`, runs `online_preflight`, asserts NO
+  `mlx-local` leak). Default stays offline-asserted → existing items 19/23/25 are byte-unchanged.
+- **Fitness signal → reuse the shaped-T3 reward (`gepa_t3_shaped_score`) on the 6-instance
+  T3 set** (BigPickle has real T3 headroom — 4/8 — so unlike local Gemma the binary F2P flip
+  is a live adopt gate, not a 0/8 wall); the T2 micro reward stays available as the cheap
+  rung. Same λ floor + T1 hard gate + 19.2/23.1 unlock rule (`(cand − base) > spread`).
+- **Budget → online cost/rate-limit aware.** Extend `gepa_budget` (or add an online sibling)
+  so the ceiling is computed from measured per-rollout **latency AND token-cost** on the
+  gateway, with rate-limit backoff; abort→fallback if unconverged or budget exceeded.
+- **Text levers only (unchanged).** The reflector still emits ONLY `system_prompt`/
+  `rules_append`/`opencode_config`/`sampling`/`env` text — never the serve fields. Whether
+  REPLACE-vs-APPEND suppression (item 18) reproduces on a *capable* model is itself a finding.
+
+- [ ] **27.1 Decouple the optimisee model + add the online-optimisee guard.** Refactor so the
+      GEPA evaluator takes the optimisee `model_ref`/`external_provider` from config (default
+      = `online-bigpickle`); add `gepa_assert_online_optimisee` (pinned ref + `online_preflight`
+      + no-local-leak) selected by an explicit opt-in mode; keep `gepa_assert_serving_offline`
+      as the default for items 19/23/25. Selftest both guards (offline rejects online, online
+      rejects local-leak).
+- [ ] **27.2 Online-GEPA feasibility gate (mirror 19.2).** Confirm the online optimisee shows
+      climbable headroom > spread on the chosen rung (a small K≥3 baseline measure of
+      BigPickle's shaped-T3 / T2 mean + spread); budget the run from measured online
+      latency + token cost (`gepa_budget` online dimension). Abort→fallback if no climbable signal.
+- [ ] **27.3 Run GEPA with the online optimisee.** Opus-4.8 in-loop reflector evolves the
+      text levers; evaluate each candidate K≥3 against the **online** optimisee with
+      `gepa_t3_shaped_score` (T1 hard gate + tool-call floor hold). Compare the winning text
+      to the local-Gemma cand2 (does terse still win on a capable model?). Counter-arm: a fixed
+      naive edit, to keep the negative honest.
+- [ ] **27.4 Adopt only if it SURVIVES re-validation** — independent K≥3 re-run (reflector out
+      of the eval path), the win within one spread of the online score. Record whether the
+      result transfers to / differs from the local-optimisee findings.
+- [ ] `make check` (ruff + mypy + pytest/selftest) green for any harness code touched;
+      `gepa_assert_online_optimisee` (online runs) / `gepa_assert_serving_offline` (local runs)
+      asserted on every candidate.
+
+### Measurement plan (item 27)
+- **Climbing signal:** the shaped-T3 mean (K≥3) of the **online optimisee** over the 6 T3
+  instances (T2 micro available as the cheap rung), 19.2/23.1 unlock rule as the A/B test;
+  **adopt gate:** a binary F2P flip + tool-calls valid that **survives an independent re-val**.
+- **The single lever varied:** the **text levers** (system/rules/tool text); the optimisee
+  model is **fixed per run** (online, configurable; BigPickle default) and the topology is held.
+- **Per-run metrics:** shaped mean + spread, binary F2P /6, made-edit / P2P-intact rate, plus
+  the **online cost dimensions** — per-rollout latency, token cost, rate-limit/retry count.
+- **Cross-item comparison:** report whether the online-optimised winning text MATCHES or
+  DIFFERS from item-19's local cand2 (the "is terse-wins a 4B artifact?" question).
+- **Gate:** `gepa_assert_online_optimisee` on online candidates (default offline guard
+  unchanged for local runs); `make check` green for any code touched.
+
+### Documentation (item 27)
+- [ ] **Update** `docs/structured-optimisation-research.md` — a §27 extending the GEPA
+      write-up to the online-optimisee mode (the guard split, the configurable model, and
+      whether the winning text transfers from the local 4B).
+- [ ] **Update** `docs/opencode-local.md` — document the online-GEPA mode + the explicit
+      constraint-reframing (analysis-loop capability, never the frozen serve path).
+- [ ] **Update** `CHANGELOG.md` only when item 27 closes.
+
 ---
 
 ## Notes / open questions
 
-- **Sequencing.** 16 → (18, 19, 20) → (25, 26). Item 16 is the prerequisite: a mechanically
+- **Sequencing.** 16 → (18, 19, 20) → (25, 26, 27). Item 16 is the prerequisite: a mechanically
   broken full harness can't give signal for 19's optimiser or 20's planning A/B. Item 20's
   (ii)-partial close spawned **25** (GEPA-optimise the multi-agent planner prompt — combines
   item 19's GEPA loop with item 20's arm-c topology) and **26** (codegraph-class exploration
   tools to cut the explore-churn / OOM wall that item 20 surfaced); 25 reuses 19+23 machinery,
-  26 can stack with 25.
+  26 can stack with 25. **27** (online-optimisee GEPA) generalises 19's loop off the frozen
+  local Gemma using item-22's `external_provider` path — BigPickle-as-example, configurable —
+  to test whether GEPA's text-lever findings transfer to a capable model.
   (Item 17's tiered harness is DONE — it supplies the gradient/fitness signal those
   downstream items consume.) **Item 22 is a cheap control that should run early:** it
   proves the full harness is mechanically sound (online BigPickle passes where the
