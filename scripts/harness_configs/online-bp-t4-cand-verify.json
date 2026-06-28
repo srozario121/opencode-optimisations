@@ -1,0 +1,14 @@
+{
+  "name": "online-bp-t4-cand-verify",
+  "description": "item 27.3 GEPA candidate (reflection-targeted, RICHER guidance). Online optimisee = opencode/big-pickle on the 5 tier-4 instances. The 27.2b reflection signal (deterministic at temp 0.0): BigPickle ENGAGES and EDITS on 4/5 but fails on VERIFICATION/COMPLETENESS — 11400 edits cleanly but F2P 0/2 (wrong/incomplete fix), 19007 F2P 1/3 (partial, misses cases), 13043 never commits an edit (no-edit, tool-churn). Unlike the weak 4B (which fails to engage), the capable model needs run-the-failing-tests + cover-all-cases + always-commit discipline. This DIRECTLY tests item 27's open question: a capable model wants RICHER verification guidance, not the terse cand2 (which targets a tool-fidelity defect this model does not have). Text lever only (rules_append -> AGENTS.md, never a system_prompt replace); serve fields pinned to the online optimisee.",
+  "external_provider": true,
+  "model_ref": "opencode/big-pickle",
+  "timeout": 240,
+  "opencode_config": {},
+  "env": {},
+  "sampling": {
+    "temperature": 0.0
+  },
+  "system_prompt": null,
+  "rules_append": "# Landing the fix\n\n- Reproduce the failing tests FIRST (run them and see them fail), then apply your fix, then RE-RUN those same tests. Iterate until every failing test passes. Never finish on an edit you have not re-run.\n- Cover EVERY failing case, not just the first one. Enumerate each scenario the issue describes and confirm your change handles all of them before finishing.\n- Always commit a concrete code edit to disk before ending. Exploring or explaining without editing fixes nothing.\n"
+}

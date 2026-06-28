@@ -1,0 +1,14 @@
+{
+  "name": "online-bp-t4-naive",
+  "description": "item 27.3 GEPA counter-arm (naive fixed edit) — keeps the negative honest. A generic, content-free 'be thorough and careful' nudge with no reflection-derived insight. If this moves the shaped T4 mean as much as the reflection-targeted cand-verify, then any apparent gain is from APPENDING-anything, not from the reflector's diagnosis — mirroring the item-20 bare/counter-arm discipline. Text lever only; serve fields pinned to the online optimisee.",
+  "external_provider": true,
+  "model_ref": "opencode/big-pickle",
+  "timeout": 240,
+  "opencode_config": {},
+  "env": {},
+  "sampling": {
+    "temperature": 0.0
+  },
+  "system_prompt": null,
+  "rules_append": "# Note\n\n- Please be thorough and careful, and do a good job on this task.\n"
+}

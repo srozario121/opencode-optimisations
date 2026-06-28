@@ -1,0 +1,14 @@
+{
+  "name": "online-bp-t4-cand2transfer",
+  "description": "item 27.3 GEPA control arm — the local-4B WINNER (item-19 cand2) ported verbatim to the online optimisee. cand2's terse grep->read-offset rules lifted the weak Gemma's T2 0.733->0.917 (prompt LENGTH was the dominant lever on the 4B: terse helps, verbose hurts). This arm tests item 27's core question: does 'terse wins' TRANSFER to a capable model, or is it a 4B artifact? Expectation per the 27.2b reflection signal: little/no effect — cand2 targets a tool-fidelity (read-the-right-line) defect BigPickle does not have; the capable model's defect is verification/completeness, which cand2 does not address. rules_append verbatim from plan-baseline-cand2.json. Text lever only; serve fields pinned to the online optimisee.",
+  "external_provider": true,
+  "model_ref": "opencode/big-pickle",
+  "timeout": 240,
+  "opencode_config": {},
+  "env": {},
+  "sampling": {
+    "temperature": 0.0
+  },
+  "system_prompt": null,
+  "rules_append": "# Local Gemma coding-agent rules\n\n- To find code: `grep` for it first to get its line number N.\n- Then `read` that file with `offset = N` and `limit = 8`. Read AT line N.\n- Never read a whole file; never read above the matched line.\n"
+}
