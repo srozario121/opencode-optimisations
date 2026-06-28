@@ -22,6 +22,15 @@ reference (item-17/23 ledgers) — it is **not** re-served alongside a candidate
   mechanically-fixable* tool-call defect, write a per-model repair shim before the scored run.
 - **Quant:** PTQ 4-bit (group-size 64) vs the **QAT** baseline ⇒ any negative verdict carries the
   **quant-method-confound** flag.
+- **Thinking-mode OFF (24.3 user decision, recorded covariate `thinking=off`).** Qwen3.5 ships
+  thinking-mode ON by default. Serve with `MLX_CHAT_TEMPLATE_ARGS='{"enable_thinking":false}'`,
+  which `scripts/mlx.sh` forwards to `mlx_lm.server --chat-template-args` so the DEFAULT request
+  path (opencode sends no `chat_template_kwargs`) is no-think — matching the non-thinking Gemma
+  baseline and avoiding the wall-clock/OOM blowup (the 9B's first step was 204 s with thinking on).
+  **NOTE — editing `chat_template.jinja` does NOT work:** mlx-lm loads the template from the HF
+  tokenizer (`tokenizer.json`), not the loose `.jinja`, so the serve-time `--chat-template-args`
+  flag is the only reliable lever. Verified: a plain request returns 6 tokens (`finish: stop`)
+  instead of 64+ thinking tokens, and tool-calls still emit cleanly.
 
 ## Gotcha 1 — the `python3` pyenv wedge (proxy won't start otherwise)
 
@@ -48,6 +57,7 @@ export MLX_MODEL="mlx-community/Qwen3.5-4B-MLX-4bit"
 export MLX_REVISION="32f3e8ecf65426fc3306969496342d504bfa13f3"   # main @ 2026-03-02, ~3.06 GB
 export MLX_PROXY_REPAIR=0       # passthrough — non-Gemma
 export MLX_SMALL=0              # don't co-serve the Gemma title model (frees RAM + avoids confound)
+export MLX_CHAT_TEMPLATE_ARGS='{"enable_thinking":false}'   # thinking OFF by default (24.3)
 
 make mlx-pull                  # one-time online weight download into mlx-models/Qwen3.5-4B-MLX-4bit
 make mlx-up                    # serve on :8080 (proxy passthrough) ; make mlx-status to verify
@@ -66,6 +76,7 @@ export MLX_MODEL="mlx-community/Qwen3.5-9B-MLX-4bit"
 export MLX_REVISION="938d8919941c6e7efd3c7150eff7fe9d12afa631"   # main, ~5.98 GB (2 shards)
 export MLX_PROXY_REPAIR=0
 export MLX_SMALL=0
+export MLX_CHAT_TEMPLATE_ARGS='{"enable_thinking":false}'   # thinking OFF (near-required for 9B wall-clock)
 
 make mlx-pull
 make mlx-up
