@@ -1634,12 +1634,25 @@ models, or any `external_provider` ref), with BigPickle as the default.
       (deterministic): BigPickle's defect is VERIFICATION/COMPLETENESS, not engagement** — unlike
       the weak 4B, it edits on 4/5 but doesn't run the failing tests / cover all cases / always
       commit. This is the proper GEPA surface → 27.3 proceeds.
-- [ ] **27.3 Run GEPA with the online optimisee.** Opus-4.8 in-loop reflector evolves the text
-      levers; evaluate each candidate K≥3 against the **online** optimisee with
-      `gepa_t3_shaped_score` (T1 hard gate + tool-call floor hold; `gepa_assert_online_optimisee`
-      on every candidate via `cmd_run`). Compare the winning text to the local-Gemma cand2 (does
-      terse still win on a capable model?). Counter-arm: a fixed naive edit, to keep the negative
-      honest. Record any optimisee==reflector contamination warning in the ledger `notes`.
+- [~] **27.3 Run GEPA with the online optimisee.** — **DESIGNED + STARTED; BLOCKED on a sustained
+      free-gateway outage (2026-06-28).** Three candidates built + guard-validated against the T4
+      surface, each varying ONLY `rules_append` (serve fields pinned to the online optimisee):
+      (1) **`online-bp-t4-cand-verify`** — the reflection-targeted RICHER lever (run-failing-tests →
+      iterate → cover-all-cases → always-commit), targeting BigPickle's verification/completeness
+      defect; (2) **`online-bp-t4-cand2transfer`** — the local-4B winner (item-19 cand2 terse rules)
+      verbatim, the "does terse transfer?" control; (3) **`online-bp-t4-naive`** — a content-free
+      "be thorough" counter-arm. **⚠ Live blocker, NOT a result:** the free `opencode/big-pickle`
+      zen gateway **rate-limited then went into a sustained outage** after ~20 back-to-back episodes
+      (baseline 15 + cand-verify run-1). The online guard **correctly aborted** the throttled runs
+      (preflight-fail, not opaque per-instance failures) — a live validation of 27.1's guard AND of
+      the **network-variance/rate-limit budget dimension** (the free gateway's binding constraint is
+      rate-limit, not wall-clock). cand-verify's partial rows (2/5, then 2× all-timeout) are
+      CONTAMINATED by the outage → discarded; the clean re-run uses `-v2` labels. A robust paced
+      runner (`scratchpad/run_27_3.sh`: wait-for-health → one candidate at a time → cooldown →
+      retry) is **ready to resume** the moment the gateway recovers; polled ~40 min, gateway did not
+      recover. **Resume:** re-run `run_27_3.sh` (or pin a different/paid online `model_ref` — the
+      machinery is model-agnostic). Compare the winning text to local cand2; counter-arm keeps the
+      negative honest.
 - [ ] **27.4 Adopt only if it SURVIVES re-validation** — independent K≥3 re-run (reflector out
       of the eval path), the win within one spread of the online score, binary F2P flip + tool
       calls valid. Record whether the result transfers to / differs from the local-optimisee

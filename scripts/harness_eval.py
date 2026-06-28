@@ -1476,14 +1476,20 @@ def gepa_t3_shaped_score(inst: dict) -> float:
 
 def gepa_t3_shaped_stats(rows: list[dict], *, suite: str = "swebench",
                          label_prefix: str | None = None,
-                         config_name: str | None = None) -> dict:
-    """K-run aggregate of the shaped T3 reward: per repeat the mean shaped score
-    over its T3 instances, then mean / spread (max−min) across the K repeats.
+                         config_name: str | None = None,
+                         tier: int = GEPA_T3_TIER) -> dict:
+    """K-run aggregate of the shaped reward: per repeat the mean shaped score over
+    its instances at `tier`, then mean / spread (max−min) across the K repeats.
 
     Mirrors `gepa_krun_stats` but the per-run statistic is the shaped MEAN (the
     climbing signal) rather than the binary pass-fraction. Also reports the binary
     F2P-flip count per run (the separate adopt gate) and the per-mode rung tally.
     Pure ledger aggregation — no model, no re-run.
+
+    `tier` defaults to GEPA_T3_TIER (the item-23 T3 fitness surface). item 27 passes
+    `tier=4` to use the harder multi-file T4 instances as the fitness surface when a
+    *capable* online optimisee is near-ceiling on T3 (the shaped score itself is
+    tier-agnostic — only the aggregation is filtered by tier).
     """
     run_means: list[float] = []
     flips: list[int] = []
@@ -1499,7 +1505,7 @@ def gepa_t3_shaped_stats(rows: list[dict], *, suite: str = "swebench",
         scores = []
         flip = 0
         for inst in r.get("instances", []):
-            if instance_tier(inst, suite) != GEPA_T3_TIER:
+            if instance_tier(inst, suite) != tier:
                 continue
             s = gepa_t3_shaped_score(inst)
             scores.append(s)
@@ -1548,19 +1554,28 @@ def gepa_t3_fitness(*, cand_t3_shaped: float,
             "reason": "T1+T2 gates held; score = T3 shaped mean"}
 
 
-def gepa_t3_gate_check(t3_shaped_mean: float | None, spread: float | None) -> dict:
-    """The 19.2 unlock rule applied with TWO ceilings. Unlock the GEPA climb on the
-    behavioural ceiling 0.50 (`(0.50 − mean) > spread`) — the most a text lever can
-    realistically reach; report the adopt ceiling 1.0 (binary F2P flip) separately.
-    A flat/noise-dominated shaped signal under 0.50 ⇒ gated ("T3 wall holds under
-    shaping"), a closed negative.
+def gepa_t3_gate_check(t3_shaped_mean: float | None, spread: float | None,
+                       *, online: bool = False) -> dict:
+    """The 19.2 unlock rule applied with a MODE-SELECTED unlock ceiling. For a
+    LOCAL (capability-bound 4B) optimisee the climb is unlocked on the *behavioural*
+    ceiling 0.50 (`(0.50 − mean) > spread`) — the most a text lever can realistically
+    reach when the model can't land F2P flips. For an ONLINE (item 27) optimisee with
+    genuine T3 headroom, the +1.0 F2P-flip rung is reachable, so its shaped mean may
+    already exceed 0.50 — which would drive `(0.50 − mean)` negative and WRONGLY gate a
+    climbable signal. **Online mode unlocks on ceiling = 1.0** (the binary-F2P-flip
+    ceiling); local mode keeps 0.50 unchanged. The adopt ceiling (1.0, the separate
+    F2P-flip adopt gate) is reported for both modes. A flat/noise-dominated shaped
+    signal under the unlock ceiling ⇒ gated ("T3 wall holds under shaping"), a closed
+    negative.
     """
+    unlock_ceiling = GEPA_T3_ADOPT_CEILING if online else GEPA_T3_SHAPED_CEILING
     climb = gepa_gate_check(t3_shaped_mean, spread, floor=-0.25,
-                            ceiling=GEPA_T3_SHAPED_CEILING)
+                            ceiling=unlock_ceiling)
     adopt = gepa_gate_check(t3_shaped_mean, spread, floor=-0.25,
                             ceiling=GEPA_T3_ADOPT_CEILING)
-    return {"unlock_ceiling": GEPA_T3_SHAPED_CEILING,
+    return {"unlock_ceiling": unlock_ceiling,
             "adopt_ceiling": GEPA_T3_ADOPT_CEILING,
+            "mode": "online" if online else "local",
             "climb": climb, "adopt_report": adopt,
             "unlocked": climb["unlocked"]}
 
@@ -1598,6 +1613,68 @@ def gepa_assert_serving_offline(optimisee_cfg: dict) -> None:
     if isinstance(prov, dict) and any(p != DEFAULT_PROVIDER for p in prov):
         raise ValueError("serving-offline: opencode_config.provider may only carry "
                          f"the local '{DEFAULT_PROVIDER}' block")
+
+
+def _provider_baseurl_is_local(base: str) -> bool:
+    """A baseURL that points at the local loopback (the frozen MLX stack)."""
+    return any(host in base for host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]"))
+
+
+def gepa_assert_online_optimisee(optimisee_cfg: dict, *, preflight: bool = True) -> None:
+    """item 27: the ONLINE-optimisee counterpart of `gepa_assert_serving_offline`.
+
+    The mode mirror-image: the config the harness EVALUATES must serve the optimisee
+    through the online gateway (item 22's `external_provider` path), with the local
+    MLX stack OFF. Asserts the run is a *pinned* online run and that NOTHING smuggles
+    the optimisee back onto the frozen local Gemma:
+      (a) `external_provider` must be set (else this is a mis-routed local run);
+      (b) `model_ref` must be pinned (the online model is FIXED per GEPA run — the
+          reflector may only evolve TEXT levers, never the served model);
+      (c) `opencode_config` must NOT carry the local `mlx-local` provider block, and
+          no provider's `options.baseURL` may point at the local loopback (no leak).
+    With `preflight=True` (the default for a real eval) it also runs `online_preflight`
+    so an unreachable gateway / missing auth aborts BEFORE the subset loop instead of
+    failing all instances opaquely. Selftest passes `preflight=False` (no network).
+    """
+    if not optimisee_cfg.get("external_provider"):
+        raise ValueError("online-optimisee: config must set external_provider=true "
+                         "(this is the online-optimisee mode; a local run uses "
+                         "gepa_assert_serving_offline instead)")
+    model_ref = optimisee_cfg.get("model_ref")
+    if not model_ref:
+        raise ValueError("online-optimisee: config must pin 'model_ref' — the online "
+                         "model is fixed per GEPA run (only text levers evolve)")
+    oc = optimisee_cfg.get("opencode_config") or {}
+    prov = oc.get("provider") if isinstance(oc, dict) else None
+    if isinstance(prov, dict):
+        if DEFAULT_PROVIDER in prov:
+            raise ValueError("online-optimisee: opencode_config must not carry the "
+                             f"local '{DEFAULT_PROVIDER}' provider block (no local-serve leak)")
+        for pid, pconf in prov.items():
+            opts = pconf.get("options") if isinstance(pconf, dict) else None
+            base = opts.get("baseURL") if isinstance(opts, dict) else None
+            if isinstance(base, str) and _provider_baseurl_is_local(base):
+                raise ValueError(f"online-optimisee: provider '{pid}' points at a local "
+                                 f"baseURL ({base}) — no local-serve leak")
+    if preflight and not online_preflight(str(model_ref)):
+        raise ValueError(f"online-optimisee: pre-flight failed for {model_ref} "
+                         "(network/auth — run `opencode auth login`)")
+
+
+def gepa_assert_optimisee_mode(cfg: dict, *, preflight: bool = True) -> None:
+    """item 27: the MODE-SELECTED GEPA serve-path guard, called from `cmd_run` on every
+    candidate eval. The mode is read off the base/run config exactly as item 22 drives
+    the serve path: `external_provider` on ⇒ online-optimisee mode
+    (`gepa_assert_online_optimisee`), else local-optimisee mode
+    (`gepa_assert_serving_offline`). Wiring this into `cmd_run` makes the
+    "asserted on every candidate" invariant real (previously enforced only in selftest)
+    and retro-hardens the offline path for items 19/23/25 — behaviour unchanged, but the
+    invariant is now enforced, not assumed.
+    """
+    if cfg.get("external_provider"):
+        gepa_assert_online_optimisee(cfg, preflight=preflight)
+    else:
+        gepa_assert_serving_offline(cfg)
 
 
 def gepa_failure_checks(rows: list[dict], *, suite: str = "micro",
@@ -1673,17 +1750,34 @@ def gepa_compare(rows: list[dict], *, cand_prefix: str,
 
 
 def gepa_budget(*, per_rollout_s: float, t2_n: int, k: int,
-                wall_budget_s: float) -> dict:
-    """The 19.2 timing deliverable: from the measured per-T2-rollout wall-clock,
-    the candidate budget N (= how many candidates a wall-clock ceiling buys) and
-    the per-candidate cost. One candidate eval = K rollouts over the T2 subset.
+                wall_budget_s: float, online: bool = False,
+                retry_count: int = 0, network_variance_s: float = 0.0,
+                token_cost_usd: float = 0.0) -> dict:
+    """The 19.2 timing deliverable: from the measured per-rollout wall-clock, the
+    candidate budget N (= how many candidates a wall-clock ceiling buys) and the
+    per-candidate cost. One candidate eval = K rollouts over the subset.
+
+    item 27 (online optimisee): wall-clock is no longer the only binding cost — a
+    hosted gateway adds per-rollout *latency* (already captured in per_rollout_s),
+    *rate-limit/retry* count, *network-variance*, and (for a paid ref) *token cost*.
+    When `online` is set, these are recorded as an `online` sub-block. token_cost_usd
+    is recorded-but-zero for the free BigPickle default; a real per-token gateway-cost
+    ceiling stays [lit-only] until a *paid* model_ref is actually run on this machine.
     """
     per_candidate_s = per_rollout_s * t2_n * k
     n = int(wall_budget_s // per_candidate_s) if per_candidate_s > 0 else 0
-    return {"per_rollout_s": round(per_rollout_s, 1), "t2_n": t2_n, "k": k,
-            "per_candidate_s": round(per_candidate_s, 1),
-            "per_candidate_min": round(per_candidate_s / 60, 1),
-            "n_candidates": n, "abort_wall_s": wall_budget_s}
+    out: dict = {"per_rollout_s": round(per_rollout_s, 1), "t2_n": t2_n, "k": k,
+                 "per_candidate_s": round(per_candidate_s, 1),
+                 "per_candidate_min": round(per_candidate_s / 60, 1),
+                 "n_candidates": n, "abort_wall_s": wall_budget_s}
+    if online:
+        out["online"] = {
+            "per_rollout_latency_s": round(per_rollout_s, 1),
+            "retry_count": retry_count,
+            "network_variance_s": round(network_variance_s, 1),
+            "token_cost_usd": round(token_cost_usd, 4),  # recorded-but-zero (free BigPickle)
+        }
+    return out
 
 
 def _render_tier_report(rows: list[dict]) -> list[str]:
@@ -2386,12 +2480,30 @@ def cmd_run(args: argparse.Namespace) -> int:
                   "`model_ref` in the config or pass `--model provider/model`",
                   file=sys.stderr)
             return 2
+        # item 27: pin the resolved ref into cfg so the mode-selected guard reads one
+        # source of truth (CLI --model wins, then config model_ref).
+        cfg["model_ref"] = model_ref
         print(f"[online arm] external_provider ON — skipping MLX health-check / "
               f"detect_model / OOM-restart; requires network + opencode auth "
               f"(run `opencode auth login` once). model={model_ref}")
-        if not online_preflight(model_ref):
+        # item 27: the mode-selected GEPA serve-path guard runs the ONLINE assertion
+        # (pinned external_provider+model_ref, no local-serve leak) + the network
+        # pre-flight on EVERY candidate eval — replacing the bare online_preflight call.
+        try:
+            gepa_assert_optimisee_mode(cfg)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
             return 2
     else:
+        # item 27: enforce the serving-offline invariant on EVERY candidate eval — was
+        # only asserted in selftest before, so the 19/23 "asserted on every candidate"
+        # claim was enforced only by the manual driver. This retro-hardens items
+        # 19/23/25 (behaviour unchanged: offline base configs still serve local Gemma).
+        try:
+            gepa_assert_optimisee_mode(cfg)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
         if not server_healthy(args.base_url):
             # Self-heal: a prior run may have left the server OOM-dead. Try once to
             # bring it back before giving up (so a multi-config sweep doesn't abort
@@ -2586,18 +2698,22 @@ def cmd_gepa_t3_gate(args: argparse.Namespace) -> int:
     run; GATED ⇒ "T3 wall holds under shaping" (a closed negative, Evidence policy).
     """
     rows = load_ledger()
+    tier = int(getattr(args, "tier", GEPA_T3_TIER) or GEPA_T3_TIER)
     stats = gepa_t3_shaped_stats(rows, suite=args.suite, label_prefix=args.label_prefix,
-                                 config_name=args.config_name)
-    gate = gepa_t3_gate_check(stats["mean"], stats["spread"])
+                                 config_name=args.config_name, tier=tier)
+    online = bool(getattr(args, "online", False))
+    gate = gepa_t3_gate_check(stats["mean"], stats["spread"], online=online)
     timing = gepa_rollout_wall(rows, suite=args.suite, label_prefix=args.label_prefix,
-                               config_name=args.config_name, tier=GEPA_T3_TIER)
+                               config_name=args.config_name, tier=tier)
     per_rollout = args.per_rollout_s or (timing["median"] or 0.0)
     t3_n = stats["n_per_run"][0] if stats["n_per_run"] else 0
     budget = gepa_budget(per_rollout_s=per_rollout, t2_n=t3_n,
-                         k=max(3, stats["k"] or 3), wall_budget_s=args.wall_budget_s)
+                         k=max(3, stats["k"] or 3), wall_budget_s=args.wall_budget_s,
+                         online=online)
     total_flips = sum(stats["flips"]) if stats["flips"] else 0
     report = {
-        "item": "23.1", "suite": args.suite,
+        "item": "27.2" if online else "23.1", "mode": gate["mode"], "suite": args.suite,
+        "tier": tier,
         "selection": {"label_prefix": args.label_prefix, "config_name": args.config_name},
         "t3_shaped": stats, "gate": gate, "timing": timing, "budget": budget,
         "binary_f2p_flips": total_flips, "rungs": stats["rung_tally"],
@@ -2606,9 +2722,10 @@ def cmd_gepa_t3_gate(args: argparse.Namespace) -> int:
     mean = stats["mean"]
     verdict = ("UNLOCKED (Phase-1 probe may run)" if gate["unlocked"]
                else "GATED (T3 wall holds under shaping)")
-    print(f"\n23.1 shaped-T3 gate: K={stats['k']} T3_shaped_mean="
-          f"{mean if mean is None else round(mean, 3)} "
-          f"spread={gate['climb']['spread']} headroom(→0.50)={gate['climb']['headroom']} "
+    print(f"\n{report['item']} shaped-T3 gate [{gate['mode']}]: K={stats['k']} "
+          f"T3_shaped_mean={mean if mean is None else round(mean, 3)} "
+          f"spread={gate['climb']['spread']} "
+          f"headroom(→{gate['unlock_ceiling']})={gate['climb']['headroom']} "
           f"flips={total_flips} per-rollout={timing['median']}s → {verdict}\n  "
           f"{gate['climb']['reason']}", file=sys.stderr)
     if args.out:
@@ -3221,6 +3338,84 @@ def cmd_selftest(args: argparse.Namespace) -> int:
           "rules_append" in GEPA_REFLECTOR_TEXT_KEYS)
     gepa_assert_serving_offline({"name": "c", "rules_append": "be concise"})  # no raise
 
+    # --- item 27: online-optimisee mode (decouple optimisee + mode-selected guard) ---
+    # The online guard is the mode mirror of the offline one: it ACCEPTS a pinned
+    # online run (external_provider + model_ref, no local-serve leak) and REJECTS any
+    # config that smuggles the optimisee back onto the frozen local Gemma. preflight=
+    # False keeps it network-free in selftest.
+    gepa_assert_online_optimisee(
+        {"name": "o", "external_provider": True, "model_ref": "opencode/big-pickle",
+         "system_prompt": None, "sampling": {"temperature": 0.0}}, preflight=False)
+    _online_rejects = 0
+    for _bad in (
+            {"name": "x", "system_prompt": "be terse"},                       # not online
+            {"name": "x", "external_provider": True},                         # no model_ref
+            {"name": "x", "external_provider": True, "model_ref": "m",        # local block leak
+             "opencode_config": {"provider": {DEFAULT_PROVIDER: {}}}},
+            {"name": "x", "external_provider": True, "model_ref": "m",        # local baseURL leak
+             "opencode_config": {"provider": {"p": {"options": {
+                 "baseURL": "http://localhost:8080/v1"}}}}}):
+        try:
+            gepa_assert_online_optimisee(_bad, preflight=False)
+        except ValueError:
+            _online_rejects += 1
+    check("27.1 online guard: accepts a pinned online config, rejects "
+          "not-online/no-ref/mlx-local-leak/local-baseURL-leak", _online_rejects == 4)
+    # The real shipped online-bigpickle config passes the online guard (the default).
+    _bp = load_config("online-bigpickle")
+    gepa_assert_online_optimisee(_bp, preflight=False)  # must not raise
+    check("27.1 online guard: the shipped online-bigpickle config is a valid "
+          "online-optimisee base",
+          bool(_bp.get("external_provider")) and bool(_bp.get("model_ref")))
+    # The mode-selected dispatcher routes by external_provider: online cfg ⇒ online
+    # guard (rejects a local leak), offline cfg ⇒ offline guard (rejects external).
+    _mode_ok = True
+    try:  # offline dispatcher must reject a smuggled external_provider
+        gepa_assert_optimisee_mode({"name": "x", "external_provider": False,
+                                    "model_ref": "leak"}, preflight=False)
+        _mode_ok = False
+    except ValueError:
+        pass
+    gepa_assert_optimisee_mode({"name": "x", "rules_append": "be concise"},
+                               preflight=False)                    # offline OK
+    gepa_assert_optimisee_mode(_bp, preflight=False)               # online OK
+    check("27.1 mode dispatcher: external_provider selects online guard, else "
+          "offline guard (and the offline guard still rejects a leak)", _mode_ok)
+    # The 0.50→1.0 ceiling bug-fix: a capable optimisee whose shaped mean exceeds the
+    # 0.50 local behavioural cap is WRONGLY gated under local ceiling but UNLOCKED
+    # under the online 1.0 F2P-flip ceiling.
+    _g_local = gepa_t3_gate_check(0.60, 0.10)                # headroom→0.50 = −0.10
+    _g_online = gepa_t3_gate_check(0.60, 0.10, online=True)  # headroom→1.0 = 0.40 > 0.10
+    check("27 ceiling: a mean>0.50 is GATED under the local cap but UNLOCKED under "
+          "the online 1.0 ceiling",
+          _g_local["unlocked"] is False and _g_local["unlock_ceiling"] == 0.50
+          and _g_online["unlocked"] is True and _g_online["unlock_ceiling"] == 1.0
+          and _g_online["mode"] == "online")
+    # The online budget carries the cost dimension sub-block (latency/retry/variance/
+    # token-cost recorded-but-zero); the offline budget does not.
+    _b_on = gepa_budget(per_rollout_s=30.0, t2_n=6, k=3, wall_budget_s=3600.0, online=True)
+    _b_off = gepa_budget(per_rollout_s=30.0, t2_n=6, k=3, wall_budget_s=3600.0)
+    check("27 budget: online mode records a cost sub-block (token-cost zero for the "
+          "free BigPickle default); offline mode does not",
+          "online" in _b_on and _b_on["online"]["token_cost_usd"] == 0.0
+          and "online" not in _b_off)
+    # item 27 (build a harder online set): the shaped stats aggregate by a CONFIGURABLE
+    # tier — tier=4 selects the harder multi-file set when a capable online optimisee is
+    # near-ceiling on T3. A mixed-tier run must aggregate each tier independently.
+    _mixed = [{"suite": "swebench", "config_name": "bp", "label": "bp-t-r1", "instances": [
+        {"id": "t3a", "tier": 3, "passed": True, "reason": "passed",
+         "pass_to_pass_passed": 6, "pass_to_pass_total": 6,
+         "metrics": {"made_edit": True, "tool_call_rounds": 3}},
+        {"id": "t4a", "tier": 4, "passed": False, "reason": "no-edit",
+         "pass_to_pass_passed": 0, "pass_to_pass_total": 0,
+         "metrics": {"made_edit": False, "tool_call_rounds": 0}}]}]
+    _s_t3 = gepa_t3_shaped_stats(_mixed, suite="swebench", label_prefix="bp-t-", tier=3)
+    _s_t4 = gepa_t3_shaped_stats(_mixed, suite="swebench", label_prefix="bp-t-", tier=4)
+    check("27 shaped stats: configurable tier aggregates each tier independently "
+          "(T3 mean 1.0 / 1 flip, T4 mean 0.0 / 0 flip)",
+          _s_t3["mean"] == 1.0 and _s_t3["flips"] == [1] and _s_t3["n_per_run"] == [1]
+          and _s_t4["mean"] == 0.0 and _s_t4["flips"] == [0] and _s_t4["n_per_run"] == [1])
+
     # --- item 20: planning-first / orchestration-topology arm configs ---------
     # The five 20.2 arms must (a) all load, (b) all keep serving on the frozen
     # local Gemma (gepa_assert_serving_offline), (c) inject text via the APPEND
@@ -3398,6 +3593,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="wall-clock ceiling the budget must fit (default 10800s/3h)")
     g3.add_argument("--out", default=None, metavar="GATE.json",
                     help="also persist the gate report to this path")
+    g3.add_argument("--online", action="store_true",
+                    help="(item 27) online-optimisee mode: unlock the climb on the 1.0 "
+                         "F2P-flip ceiling, not the 0.50 local behavioural cap (a capable "
+                         "model's shaped mean can exceed 0.50)")
+    g3.add_argument("--tier", type=int, default=GEPA_T3_TIER,
+                    help="(item 27) tier to use as the shaped fitness surface (default 3; "
+                         "pass 4 for the harder multi-file set when a capable online "
+                         "optimisee is near-ceiling on T3)")
     g3.set_defaults(func=cmd_gepa_t3_gate)
 
     st = sub.add_parser("selftest", help="offline sanity checks (no model needed)")

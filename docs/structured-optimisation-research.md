@@ -381,3 +381,126 @@ negative stands with d flagged. **The lasting deliverable is the 23.1 machinery*
 capability moves. Op note: `make mlx-up` can wedge on a broken pyenv `python3` (missing gettext
 `libintl.8.dylib`) — only the repair proxy uses bare `python3` (the server uses `uvx`); fix with
 a `python3`→3.12 PATH shim.
+
+## 27 — GEPA against an ONLINE optimisee (machinery landed 2026-06-28; runs pending)
+
+Every GEPA result above is entangled with the **16 GB / 4B capability wall** (item 19: prompt
+*length* dominates a weak model; items 20/23: the T3 wall holds under shaping; item 18: gutting
+the prompt suppresses tool use). Item 27 adds the capability to run the **same GEPA loop with an
+ONLINE model as the optimisee** — evolving the text levers against a *capable* model's shaped-T3
+signal — so we can test whether "terse helps / verbose hurts" is a **4B artifact** or a
+**transferable harness property**. `opencode/big-pickle` (item 22's proven online arm) is the
+default; any online `model_ref` is accepted. This is an **analysis/optimisation-loop capability**
+(like the cloud reflector already is) — it **never touches the frozen local serve path**.
+
+### Mode selector + the `cmd_run` guard wiring (27.1, shipped)
+
+- **Mode = `external_provider` on the base/run config** (no new flag/field — reuses item 22's
+  serve-path selector). `external_provider` on ⇒ online-optimisee; off ⇒ local-optimisee. The
+  reflector is *forbidden* to change `external_provider`/`model_ref`/`base_url`
+  (`GEPA_REFLECTOR_FORBIDDEN_KEYS`), so the optimisee model is **fixed per GEPA run** and only the
+  TEXT levers evolve.
+- **`gepa_assert_online_optimisee`** is the mode mirror of `gepa_assert_serving_offline`: it
+  asserts a pinned `external_provider`+`model_ref`, runs `online_preflight` (network+auth check),
+  and rejects any `mlx-local`/local-`baseURL` leak back onto the frozen local Gemma.
+- **`gepa_assert_optimisee_mode`** dispatches by mode and is now **called from `cmd_run` on every
+  candidate eval** (both branches). This makes the 19/23 "asserted on every candidate" invariant
+  real — previously the offline guard was invoked **only in selftest**, never by `cmd_run`. Wiring
+  it in **retro-hardens** items 19/23/25 (behaviour unchanged; all 19 shipped offline configs
+  verified to pass) and a local run that smuggles `external_provider` still fails loudly.
+
+### The 0.50→1.0 online unlock-ceiling fix (shipped)
+
+`gepa_t3_gate_check` hard-coded the **behavioural** ceiling `0.50` (the most a text lever can
+reach on the capability-bound 4B, which can't land F2P flips). A *capable* optimisee reaches the
+**+1.0 F2P-flip rung**, so its shaped-T3 mean can exceed 0.50 → `(0.50 − mean)` goes negative and
+would **wrongly gate a climbable signal**. Fix: the ceiling is now **mode-selected** —
+`gepa_t3_gate_check(..., online=True)` (CLI `gepa-t3-gate --online`) unlocks on **1.0**; local
+runs keep **0.50** unchanged. The separate adopt ceiling (1.0, the F2P-flip adopt gate) is
+reported for both modes.
+
+### Online budget dimension (shipped)
+
+`gepa_budget(..., online=True)` adds an `online` sub-block: per-rollout **latency**,
+**rate-limit/retry** count, **network-variance**, and **token-cost** (**recorded-but-zero** for
+the free BigPickle default — a real per-token gateway-cost ceiling stays **[lit-only]** until a
+*paid* `model_ref` is run on this machine).
+
+### 27.2 — online baseline measured (BigPickle, 6 tier-3 instances, K=3, 2026-06-28)
+
+Free `opencode/big-pickle` resolves through the opencode-zen gateway **without auth** (cost $0).
+The mode-selected guard + `online_preflight` passed live; the K=3 run scored
+`online-bigpickle-t3-r1..r3`:
+
+| run | flips /6 | shaped mean |
+|---|---|---|
+| r1 | 5 | 0.792 |
+| r2 | 5 | 0.875 |
+| r3 | 4 | 0.583 |
+| **K=3** | **14/18** | **mean 0.75, spread 0.292** |
+
+Rungs across all 18: **14× +1.0** (real fix) · 1× +0.25 (tool-churn) · **3× −0.25** (catastrophic —
+edit broke P2P). **This closes the [lit-only] headroom claim:** BigPickle has real, large T3
+capability — categorically unlike the local 4B's 0/6 wall (item 22's 4/8 was the *mixed* T3+T4
+subset; this is the tier-3-only fitness set).
+
+**The 0.50→1.0 ceiling fix was load-bearing.** mean 0.75 exceeds the 0.50 *local behavioural* cap,
+so the old hard-coded constant would have computed `(0.50 − 0.75) = −0.25` headroom and
+nonsensically gated a genuinely strong model. The online ceiling (1.0) gives the correct
+headroom-to-ceiling 0.25.
+
+**Gate verdict: GATED — for a NOVEL reason (the mirror of the local negative).** headroom-to-1.0
+(0.25) ≤ K-run spread (0.292). Not "the T3 wall holds / no capability" (the item-23 local result),
+but **near-ceiling**: BigPickle is so close to a perfect 6/6 that the small remaining headroom is
+swamped by run-to-run noise — and the spread is driven by the **3 occasional P2P-breaking edits**,
+not by failures to engage. These 6 sympy tier-3 instances are **too easy to serve as a GEPA fitness
+surface for a capable model**. Budget (measured online dim): per-rollout median **163.7s**,
+per-candidate **≈49 min** at K=3 (fits 3 candidates in a 3h ceiling); retry/variance 0, token $0.
+
+### 27.2b — harder fitness surface: tier-4 UNLOCKED (BigPickle, 5 T4 instances, K=3)
+
+27.2 GATED T3 *near-ceiling*, so (user-chosen) the fitness surface moved to the **5 tier-4
+multi-file instances** (13043/15345/11400/18532/19007). The gate machinery was generalised to a
+**configurable tier** (`gepa_t3_shaped_stats(tier=)`, CLI `gepa-t3-gate --tier`; the shaped score
+is tier-agnostic, only the aggregation is filtered). K=3 (`online-bigpickle-t4-r1..r3`): **2/5
+every run** (binary spread 0 — temp 0.0 is near-deterministic), shaped **mean 0.65, spread 0.0**,
+headroom-to-1.0 **0.35 > 0 → UNLOCKED**. Per-rollout 60s, per-candidate **15 min** at K=3.
+
+| instance | rung (×3) | failure |
+|---|---|---|
+| 15345, 18532 | +1.0 | solved (F2P fully flips) |
+| 11400 | +0.50 | clean edit but **F2P 0/2** — fix wrong/incomplete |
+| 19007 | +0.50 | clean edit but **F2P 1/3** — partial, misses cases |
+| 13043 | +0.25 | **no-edit** — explores, never commits |
+
+**Reflection signal (deterministic).** BigPickle's defect is **verification/completeness, NOT
+engagement** — the *opposite* of the weak 4B. It edits on 4/5 but doesn't run the failing tests,
+doesn't cover all cases, sometimes doesn't commit. This predicts a capable model wants **richer
+verification guidance**, not the terse cand2 — the very hypothesis 27.3 tests.
+
+### 27.3 — candidates built; live sweep PAUSED on a free-gateway outage (2026-06-28)
+
+Three candidates were built + guard-validated against the T4 surface, each varying ONLY
+`rules_append`: **`online-bp-t4-cand-verify`** (reflection-targeted richer lever: run-failing-tests
+→ iterate → cover-all-cases → always-commit), **`online-bp-t4-cand2transfer`** (the local-4B cand2
+verbatim — the "does terse transfer?" control), **`online-bp-t4-naive`** (a content-free "be
+thorough" counter-arm).
+
+**Live blocker (not a result).** The free `opencode/big-pickle` zen gateway **rate-limited then
+went into a sustained outage** after ~20 back-to-back episodes — down across ~90 min of polling.
+Two genuine wins fell out of it: (1) the 27.1 online guard **correctly aborted** the throttled runs
+at the pre-flight (clean fail, not 45 opaque per-instance failures); (2) it empirically confirms the
+**rate-limit/network-variance budget dimension** — the free gateway's binding constraint is
+rate-limit, not wall-clock, so a GEPA sweep must be PACED (a paced runner is committed at
+`scratchpad/run_27_3.sh`: wait-for-health → one candidate at a time → cooldown → retry). The
+contaminated cand-verify rows (2/5 then 2× all-timeout) are discarded; the clean re-run uses `-v2`
+labels. **27.3/27.4 PAUSED per user (2026-06-28)** — resume by re-running `run_27_3.sh` when
+big-pickle recovers, or pin a different online `model_ref` (the machinery is model-agnostic; free
+`north-mini-code-free` / `nemotron-3-ultra-free` were reachable during the outage).
+
+**Lasting item-27 deliverables (regardless of the 27.3 outcome):** the online-optimisee mode + the
+mode-selected `cmd_run` guard (which retro-hardens the offline path for items 19/23/25), the
+0.50→1.0 online ceiling fix, the configurable-tier gate, the online budget dimension, and the first
+measurement that **GEPA's capability framing is real** — a capable online model lands real T3/T4
+fixes (14/18 + 6/15 F2P) where the frozen 4B sits at 0, with a *verification/completeness* defect
+profile opposite to the 4B's *engagement* failures.

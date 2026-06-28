@@ -1584,6 +1584,41 @@ unlock on 0.50, adopt on 1.0). The T3 tier was expanded 3→6.
   reward + `gepa-t3-gate` machinery is the lasting deliverable, reusable when capability moves.
   Full write-up: `docs/structured-optimisation-research.md` §23.1, §23.3.
 
+## GEPA against an ONLINE optimisee (TODO item 27)
+
+**Machinery landed 2026-06-28 (27.1); the BigPickle runs (27.2–27.4) are pending.** Every GEPA
+result above is entangled with the 16 GB / 4B **capability wall**. Item 27 generalises the GEPA
+loop off the frozen local Gemma so the text levers can be evolved against a **capable** online
+model (`opencode/big-pickle` default, any online `model_ref`) — the control that answers whether
+"terse helps / verbose hurts" is a 4B artifact or a transferable harness property.
+
+**Constraint reframing (explicit).** Online-GEPA is an **analysis/optimisation-loop capability**
+(like the Opus-4.8 reflector already is) — it **never touches the frozen local serve path**. The
+shipping local harness stays fully offline at serve time; online-optimisee is a separate,
+explicitly opted-in mode keyed off `external_provider` (item 22's serve selector). The optimisee
+model is **fixed per GEPA run** (the reflector may only evolve TEXT levers); the two modes never
+silently mix.
+
+- **Mode-selected serve guard, now enforced in `cmd_run`.** `gepa_assert_optimisee_mode` routes by
+  `external_provider`: online ⇒ `gepa_assert_online_optimisee` (pinned `external_provider`+
+  `model_ref` + `online_preflight` + no `mlx-local`/local-`baseURL` leak), else
+  `gepa_assert_serving_offline`. It is called on **every candidate eval** in both branches of
+  `cmd_run` — which also **retro-hardens** items 19/23/25 (the offline guard was previously
+  asserted only in selftest, never by `cmd_run`).
+- **Online unlock ceiling = 1.0** (`gepa-t3-gate --online`). A capable optimisee reaches the +1.0
+  F2P-flip rung, so its shaped-T3 mean can exceed the 0.50 *local behavioural* cap; unlocking on
+  0.50 would wrongly gate a climbable signal. Local runs keep 0.50 unchanged.
+- **Online budget dimension** (`gepa_budget(online=True)`): per-rollout latency, rate-limit/retry,
+  network-variance, and token-cost (**recorded-but-zero** for the free BigPickle default).
+
+```bash
+# (gate, online) decide whether online-GEPA may run — ceiling 1.0, reads the ledger
+python scripts/harness_eval.py gepa-t3-gate --online --label-prefix online-bigpickle-t3-
+# evaluate a candidate against the ONLINE optimisee (needs network + `opencode auth login`):
+make harness-eval-online CONFIG=online-bigpickle HARNESS_ARGS="--repeats 3"
+```
+Full write-up: `docs/structured-optimisation-research.md` §27.
+
 ## Planning-first / orchestration topology (TODO item 20)
 
 **Closed 2026-06-28 — verdict (ii) PARTIAL: planning-first does not transfer; multi-agent
