@@ -33,7 +33,44 @@ claude-mem memory and the `docs/` research.
   ⚠ **Did NOT transfer to the full harness** — see item 16 (in `TODO.md`).
 - **15** — Extracted the opencode stack into this standalone published repo. **= this repo.**
 
-## Done (items 16, 17, 18, 19, 21, 22, 23)
+## Done (items 16, 17, 18, 19, 20, 21, 22, 23)
+
+- **20** — **Planning-first phase / orchestration topology — closed 2026-06-28, verdict
+  (ii) PARTIAL: planning-first does not transfer; multi-agent is the only arm that ever
+  lands a real T3 fix, but the gain does not survive re-validation.** The [lit-only] 20.1
+  survey (full orchestration likely a net loss at 8–12 tok/s; a constrained plan-then-build
+  the part worth testing) was **measured** on the local stack. Five topology arms
+  (`scripts/harness_configs/plan-*.json`, all on the cand2 `rules_append` base except bare;
+  arm b a single-run plan-then-build approximation via APPEND, NOT the `agent.build.prompt`
+  REPLACE that item 18 burned; arm c re-enables the globally-disabled `task` tool + planner/
+  coder subagents) were A/B'd K=3 on the item-23 6-instance T3 set, scored by the item-23
+  shaped reward, + an independent K=3 confirmation re-val of the winner.
+  - **20.2 — configs + selftest + feasibility smoke.** 5 arms built, all pass
+    `gepa_assert_serving_offline`, no prompt-REPLACE; 6 new selftest checks, `make check`
+    green. Smoke (sympy-21614): arm b suppresses tool use (0 valid calls / prose-markdown);
+    arm c emits valid calls but **never drives `task`** (degrades to flat churn) — both
+    flagged, neither aborted.
+  - **20.3 — multi-arm A/B.** bare **0.153** (reused 23.1) · cand2 **0.0** (OOM-regresses —
+    measures item-23's unrun "d" arm) · arm a goal+nothink **0.097** · arm b plan-then-build
+    **0.083** (within spread of bare — finding #1 "goal plans help" does NOT transfer) ·
+    **arm c multi-agent 0.278** (online K=3, Δ+0.125, 22714 flips 3/3 — the correct
+    `evaluate`-guard `point.py` fix).
+  - **Confirmation re-val (the decisive correction).** Independent K=3: arm c **0.153**
+    (=bare), 22714 flips **1/3** (r2 OOM, r3 timeout). **Combined K=6: 0.215, Δ +0.062 ≪
+    spread 0.292 → does NOT clear the significance test.** The online win was favorable
+    variance.
+  - **Decisive finding.** Arm c is the **only** arm that ever fixes a real T3 bug (22714
+    **4/6** across K=6; every other arm 0 flips) at **≈bare token cost** (1542 vs 1688 —
+    the "multi-agent 8–15×" literature refuted here) — so multi-agent is **not** a uniform
+    net loss. **But the mean gain does not survive re-validation, and the win is
+    mechanism-incidental:** the `task` tool **never fires** (the weak 4B won't orchestrate —
+    confirming the literature/smoke); the gain is a config side-effect (likely the planner/
+    coder subagent *descriptions* as goal scaffolding). **Verdict (ii) partial — movable on
+    22714, NOT a robust adopt; do not ship arm c as default.** The binding constraint on
+    22714 is **OOM/timeout variance, not capability** (correct fix produced 4×) → the next
+    lever is the 16 GB / 600 s **resource wall**, not more prompt/topology shaping.
+    `make check` green; selftest covers the 5 arm configs + serving-offline + APPEND-only +
+    arm-c task/subagent materialisation. Full write-up: `docs/item20-20.3-results.md`.
 
 - **23** — **GEPA on the next rung, T3 (real fixes), via a SHAPED reward — closed
   2026-06-27, verdict (iii): the T3 capability wall holds UNDER SHAPING (validated, not

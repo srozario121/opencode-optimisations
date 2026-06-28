@@ -124,6 +124,14 @@ signal for T3; the **binary F2P flip stays the adopt gate**. Fitness (`gepa_t3_f
 report **1.0** as the separate adopt gate. The 23.1 re-baseline UNLOCKED it (shaped mean 0.153,
 headroom 0.347 > spread 0.083); see `docs/structured-optimisation-research.md` §23.1.
 
+**Item 20 reuses this same shaped-T3 regime** as its A/B signal (shared with item 23): the
+planning/orchestration-topology arms (`scripts/harness_configs/plan-*.json`) are scored by
+`gepa_t3_shaped_score` over the same 6-instance T3 set, with the 19.2/23.1 spread test
+(`(arm − base) > spread`) as the significance gate. The topology levers ride the
+**`rules_append`** APPEND channel (+ raw `opencode_config` for the multi-agent `task`/subagent
+arm), never the `system_prompt` REPLACE channel. Result: verdict (ii) partial — see
+`docs/item20-20.3-results.md` and `docs/opencode-local.md`.
+
 ### Commands
 
 ```bash

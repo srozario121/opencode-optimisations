@@ -1584,6 +1584,33 @@ unlock on 0.50, adopt on 1.0). The T3 tier was expanded 3→6.
   reward + `gepa-t3-gate` machinery is the lasting deliverable, reusable when capability moves.
   Full write-up: `docs/structured-optimisation-research.md` §23.1, §23.3.
 
+## Planning-first / orchestration topology (TODO item 20)
+
+**Closed 2026-06-28 — verdict (ii) PARTIAL: planning-first does not transfer; multi-agent
+is the only arm that ever lands a real T3 fix, but the gain does not survive re-validation.**
+Five topology arms (`scripts/harness_configs/plan-*.json`, all on the cand2 `rules_append`
+base except bare) were A/B'd K=3 on the item-23 6-instance T3 set, scored by the item-23
+shaped reward, + an independent K=3 confirmation re-val of the winner.
+
+- **Planning-first does NOT beat bare** — goal-nudge+nothink (arm a, 0.097) and procedural
+  plan-then-build (arm b, 0.083) both fall within spread of bare (0.153); the [lit-only]
+  "goal plans help weak models" does not hold here. Arm b's procedural append *suppresses*
+  tool use (4/6 no-tool-stop).
+- **Multi-agent (arm c) is the ONLY arm that ever fixes a real T3 bug** — `sympy-22714`
+  flips to the correct `evaluate`-guard `point.py` edit **4/6 across K=6** (all other arms:
+  0 flips ever), at **≈bare token cost** (1542 vs 1688 — the "8–15× multi-agent" literature
+  is refuted here). **But it is NOT a robust adopt:** online K=3 looked like a win (0.278,
+  3/3) yet the independent re-val landed at 0.153 (=bare, 1/3), combined K=6 0.215 with
+  Δ +0.062 ≪ spread 0.292 → does not clear the significance test. The win is high-variance
+  (OOM/timeout), single-instance, and **mechanism-incidental** — the `task` tool never
+  fires (the weak 4B won't orchestrate; the gain is a config side-effect, likely the
+  planner/coder subagent *descriptions* acting as goal scaffolding).
+- **The item-19 cand2 prompt winner does NOT transfer to T3** — it OOM-regresses (0.153→0.0)
+  by churning grep/read into longer contexts (measures item-23's unrun "d" arm).
+- **Key pointer:** 22714's bottleneck is **OOM/timeout variance, not capability** (the
+  correct fix was produced 4×) → on the 16 GB / 600 s ceiling the next lever is the resource
+  wall, not more prompt/topology shaping. Full write-up: `docs/item20-20.3-results.md`.
+
 ## Troubleshooting
 
 - **OOM / memory pressure on 16 GB** — stick to E4B (or drop to E2B). Close

@@ -1,9 +1,14 @@
 # TODO — opencode-optimisations
 
-The repo's running work-ledger. **Items 20 and 24 are the open work** (24 = the
+The repo's running work-ledger. **Item 24 is the only open work** (24 = the
 model-swap survey, added 2026-06-27). **Completed
-items 1–19 and 21–23 now live in `CHANGELOG.md`** (items 18 and 19's
-full ticked detail is also kept inline below for reference). Item 16 (the dominant harness
+items 1–23 now live in `CHANGELOG.md`** (items 18, 19 and 20's
+full ticked detail is also kept inline below for reference). **Item 20 (planning-first /
+orchestration topology) closed 2026-06-28: verdict (ii) PARTIAL — planning-first does not
+transfer (arms a/b within spread of bare); the multi-agent counter-arm is the only arm to ever
+land a real T3 fix (22714, 4/6 K=6) at ≈bare cost (refutes 8–15×), but the mean gain does NOT
+survive re-validation and the `task` mechanism never fires (config side-effect) → not a robust
+adopt; cand2 OOM-regresses on T3. The 22714 bottleneck is OOM/timeout variance, not capability.** Item 16 (the dominant harness
 bottleneck) closed 2026-06-25: the L0–L6 mechanical-lever sweep is complete and the 0/8
 is **capability-bound, not a harness defect**. **Item 19 (GEPA) closed 2026-06-26: ADOPT
 cand2 (terse rules, T2 0.733→0.917) — prompt length is the dominant lever on this weak 4B
@@ -423,7 +428,19 @@ capability-bound. **19.2 gate UNLOCKED** (K=5 T2 climbable) → **19.3 ran → A
 - [x] **Update** `CHANGELOG.md` — **DONE.** Item 19 closed entry (gate UNLOCKED + GEPA
       ADOPT cand2), mirroring the item-17/21 pattern.
 
-### 20. Planning-first phase / orchestration topology  ← deep-research item
+### 20. Planning-first phase / orchestration topology  ✅ CLOSED 2026-06-28 → `CHANGELOG.md`
+
+> **CLOSED — verdict (ii) PARTIAL.** Planning-first does NOT transfer to this stack (arms a/b
+> within spread of bare; finding #1 fails). The multi-agent counter-arm (c) is the ONLY arm
+> that ever lands a real T3 fix (sympy-22714, the correct `point.py` `evaluate` guard, 4/6 over
+> K=6 — all others 0 flips) at ≈bare token cost (refutes the 8–15× literature), so it is NOT a
+> uniform net loss — BUT its mean gain does NOT survive an independent re-val (online K=3 0.278
+> → re-val 0.153 = bare; combined K=6 0.215, Δ+0.062 ≪ spread 0.292) and the win is mechanism-
+> incidental (the `task` tool never fires; gain is a config side-effect, likely subagent
+> descriptions as goal scaffolding). **NOT a robust adopt.** cand2 OOM-regresses on T3 (measures
+> item-23's unrun "d" arm). The 22714 bottleneck is OOM/timeout variance, not capability → next
+> lever is the resource wall. Lasting deliverables: 5 topology arm configs + the multi-arm
+> shaped-T3 A/B path. Full detail kept below (ticked) + `CHANGELOG.md` + `docs/item20-20.3-results.md`.
 
 **Goal.** Decide whether to add a **dedicated planning phase before execution**,
 and how much orchestration machinery is worth it for a weak local model. **Item-16
@@ -568,10 +585,11 @@ delegates to subagents (`subagent_type`, background, resume).
       - **Plan content rule:** goal/what-to-achieve, **never** detailed how-to. ✓ honored
         (arm a goal-only; arm b procedural is the deliberate finding-#1 contrast).
 - [x] **20.3 Local-harness validation — multi-arm A/B (the actual evidence).** ✓ **DONE
-      2026-06-27 — VERDICT (i) PARTIAL-ADOPT: the multi-agent SHAPE (arm c) is the only
-      arm that moves T3, but NOT via its mechanism.** All 5 arms run K=3 on the 6-instance
-      T3 set (600s cap), scored by the item-23 shaped reward. Full write-up:
-      `docs/item20-20.3-results.md`. Results:
+      2026-06-28 — VERDICT (ii) PARTIAL: arm c (multi-agent) is the only arm that EVER
+      lands a real T3 fix (22714), but the mean gain does NOT survive re-validation.**
+      All 5 arms run K=3 on the 6-instance T3 set (600s cap) + an independent K=3
+      confirmation re-val of arm c, scored by the item-23 shaped reward. Full write-up:
+      `docs/item20-20.3-results.md`. Results (online K=3):
 
       | arm | shaped mean (K=3) | Δ vs bare | clears spread? | F2P flips | per-rollout | avg tok |
       |---|---|---|---|---|---|---|
@@ -581,18 +599,20 @@ delegates to subagents (`subagent_type`, background, resume).
       | arm b (plan-then-build) | 0.083 | −0.070 | no | 0 | 66s | 329 |
       | **arm c (multi-agent)** | **0.278** | **+0.125** | **YES** | **3** | 455s | 1542 |
 
-      **Headline:** arm c clears the 19.2/23.1 spread test (Δ0.125 > spread 0.083) and
-      lands the **first reproducible T3 real fix** — `sympy-22714` flips F2P 1/1, P2P
-      11/11 in **all 3 repeats** (the correct `evaluate` guard in `point.py`). **But the
-      `task` tool NEVER fired** — the win is a clean grep→read→edit, a *config side-effect*
-      (likely the planner/coder subagent DESCRIPTIONS acting as goal-style scaffolding),
-      NOT working multi-agent delegation (the designed mechanism is inert — confirms the
-      smoke/literature). Cost ≈ bare (1542 tok vs 1688) → **refutes finding #6's 8–15×**.
-      **Caveats:** single-instance-driven (+0.125 rides on 22714 alone), mechanism-
-      uncertain, **confirmation run recommended** (independent K≥3 / full-8 "pass/8
-      holding") before shipping arm c as a default. Planning-first (a/b) does NOT beat
-      bare → finding #1 does not transfer; cand2 does not transfer to T3 (OOM-regresses,
-      measures item-23's unrun "d" arm). Arms run:
+      **Online K=3 looked like a win** (arm c 0.278, Δ+0.125 > spread, 22714 flips 3/3) —
+      **but the independent confirmation re-val corrected it:** re-val arm c 0.153 (=bare),
+      22714 flips only **1/3** (r1 pass; r2 OOM, r3 timeout). **Combined K=6: mean 0.215,
+      Δ+0.062 vs bare ≪ spread 0.292 → does NOT clear the significance test.** 22714 flips
+      **4/6** overall — the **correct** `evaluate`-guard `point.py` fix — so arm c is the
+      **ONLY arm that ever lands a real T3 fix** (all others 0 flips), but the win is
+      **high-variance/OOM-bound, single-instance, and mechanism-incidental** (the `task`
+      tool NEVER fires — multi-agent delegation stays inert; the gain is a config
+      side-effect, likely the planner/coder subagent DESCRIPTIONS as goal-scaffolding).
+      Cost ≈ bare (1542 tok vs 1688) → **refutes finding #6's 8–15×**. **NOT a robust
+      adopt; do not ship arm c as default.** Planning-first (a/b) within spread of bare →
+      finding #1 does not transfer; cand2 OOM-regresses on T3 (measures item-23's unrun
+      "d" arm). **The binding constraint on 22714 is OOM/timeout variance, not capability**
+      (correct fix produced 4×) → next lever is the resource wall, not more shaping. Arms run:
       1. **baseline-bare** + **baseline-cand2** (the two reference brackets);
       2. **planning-first** = arm (a) goal-nudge + `nothink` (the cheap, likely-best shape);
       3. **native Plan→Build** = arm (b);
@@ -632,14 +652,15 @@ delegates to subagents (`subagent_type`, background, resume).
 
 ### Documentation (item 20)
 
-- [ ] **Update** `docs/orchestration-planning-research.md` — append a "20.3 local
-      validation" section converting the **[lit-only]** verdict into the measured result
-      (which arm moved the shaped signal; whether multi-agent is a net loss *here*).
-- [ ] **Update** `docs/tiered-harness.md` — note that item 20 reuses the shaped T3 reward
-      as its A/B signal (shared regime with item 23) and the `rules_append` topology arms.
-- [ ] **Update** `docs/opencode-local.md` (master doc) — record item 20's adopt/reject
-      outcome as a lever result (planning topology: adopted / partial / rejected).
-- [ ] **Update** `CHANGELOG.md` only when item 20 closes (item-17/19/21 pattern).
+- [x] **Update** `docs/orchestration-planning-research.md` — **DONE.** Appended a "20.3 LOCAL
+      VALIDATION" section converting the **[lit-only]** verdict to the measured result (which
+      arm moved the shaped signal; multi-agent not a uniform loss here but doesn't survive re-val).
+- [x] **Update** `docs/tiered-harness.md` — **DONE.** Noted item 20 reuses the shaped T3 reward
+      as its A/B signal (shared regime with item 23) + the `rules_append` topology arms.
+- [x] **Update** `docs/opencode-local.md` (master doc) — **DONE.** New *Planning-first /
+      orchestration topology* section recording the (ii) partial outcome.
+- [x] **Update** `CHANGELOG.md` — **DONE.** Item 20 closed entry under *Done (items …20…)*
+      with the full arm table + the re-val correction + verdict (ii) partial.
 
 ### 23. GEPA on the next rung — T3 (single-file real fixes) via a shaped reward + longer run  ✅ CLOSED 2026-06-27 → `CHANGELOG.md`
 

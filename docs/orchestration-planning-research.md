@@ -154,3 +154,42 @@ on this exact stack must be measured by prototype, not assumed.**
 - arXiv:2305.18323 (ReWOO), arXiv:2305.04091 (Plan-and-Solve) — plan-execute decoupling.
 - Anthropic multi-agent research system; arXiv:2603.01257 — multi-agent cost + single-vs-multi patching.
 - arXiv:2603.04474 — multi-agent error propagation / orchestrator-as-cut-set.
+
+---
+
+## 20.3 — LOCAL VALIDATION (the [lit-only] verdict is now MEASURED on this stack)
+
+The 20.1 verdict above was **[lit-only]**. Item 20.3 ran the multi-arm A/B on the
+local Gemma-4-E4B / opencode / MLX stack: 5 arms × K=3 on the item-23 6-instance T3
+set, scored by the item-23 shaped reward, + an independent K=3 confirmation re-val of
+the winner. Full data: `docs/item20-20.3-results.md`. **Verdict (ii) PARTIAL.**
+
+| arm | shaped mean (K=3) | Δ vs bare 0.153 | clears spread? | F2P flips | per-rollout | avg tok |
+|---|---|---|---|---|---|---|
+| bare (reused 23.1) | 0.153 | — | — | 0 | 257s | 1688 |
+| cand2 base | 0.000 | −0.153 | regress | 0 | 518s | 1660 |
+| arm a — goal + nothink | 0.097 | −0.056 | no | 0 | 187s | 1056 |
+| arm b — plan-then-build | 0.083 | −0.070 | no | 0 | 66s | 329 |
+| arm c — multi-agent | 0.278→**0.215** (K=6) | +0.062 (K=6) | **no** | 4/6 (K=6) | 455s | 1542 |
+
+**What the literature got right vs wrong HERE:**
+- **Finding #1 (goal plans help weak models) — does NOT transfer.** Arms a (0.097) and
+  b (0.083) sit within spread of bare; neither beats the no-plan floor. The procedural
+  plan-then-build (b) actively *suppresses* tool use (4/6 no-tool-stop). Planning-first
+  is not a win on this stack.
+- **Findings #6/#7/#8 (multi-agent = 8–15× cost / a net loss) — REFUTED on cost,
+  PARTIALLY refuted on outcome.** Arm c costs ≈ bare (1542 vs 1688 output tok), not
+  8–15×. And it is the **only** arm that ever lands a real T3 fix (`sympy-22714`, the
+  correct `evaluate`-guard `point.py` edit, 4/6 across K=6 — every other arm: 0 flips).
+  So multi-agent is *not* a uniform net loss here.
+- **BUT the mean gain does NOT survive re-validation** (online K=3 0.278 → re-val 0.153
+  = bare; combined K=6 0.215, Δ +0.062 ≪ spread 0.292). And the win is **mechanism-
+  incidental**: the `task` tool **never fires** — opencode's weak 4B will not drive
+  subagent delegation (confirming finding #6's mechanism concern + the 20.2 smoke); the
+  gain is a *config side-effect* (likely the planner/coder subagent DESCRIPTIONS acting
+  as goal-style scaffolding). → **partial, not a robust adopt.**
+- **Lookahead/plan-type results are model-capacity-bound here:** the one crackable
+  instance (22714) is limited by **OOM/timeout variance, not reasoning** (the correct
+  fix was produced 4×). On a 16 GB / 600 s ceiling the next lever is the *resource* wall,
+  not more planning/topology shaping. cand2 (the item-19 T2 prompt winner) likewise
+  OOM-regresses on T3 — appended terse rules make the weak model churn into OOM.
