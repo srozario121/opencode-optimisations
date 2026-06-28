@@ -1202,7 +1202,7 @@ them for a head-to-head local A/B against the QAT-Gemma-4 baseline.
       binding dimension is literature-blind → only 24.3 decides it); (b) Qwen3.5 small models
       are natively MULTIMODAL → 4-bit builds may load via `mlx_vlm` not `mlx_lm` (repair-proxy
       / opencode integration check before A/B).
-- [ ] **24.2 Shortlist + feasibility staging (NO scored run).** Shortlist resolved by
+- [x] **24.2 Shortlist + feasibility staging (NO scored run).** Shortlist resolved by
       plan-review = **Qwen3.5-4B then Qwen3.5-9B** (Phi-4-Mini not funded). For each: confirm
       an mlx-lm-loadable build at its **best-fitting quant** under the 16 GB ceiling (record
       effective bpw), then **stage a per-candidate SERVE RECIPE — not just a config JSON**.
@@ -1217,6 +1217,21 @@ them for a head-to-head local A/B against the QAT-Gemma-4 baseline.
       (b) emits valid tool-calls through the **passthrough** proxy on a 1–2 instance smoke. If
       a candidate shows a systematic, mechanically-fixable tool-call defect, write a per-model
       repair shim before 24.3. Fail (a)/(b) ⇒ recorded null arm.
+  **✓ DONE 2026-06-28 — BOTH candidates PASS the feasibility gate** (`docs/item24-feasibility-notes.md`).
+  Deliverables shipped: `scripts/harness_configs/model-qwen3.5-4b.json` + `model-qwen3.5-9b.json`
+  (sampling/rules only), `scripts/harness_configs/SERVE-RECIPES-item24.md` (env/pull/revision-pin
+  + passthrough ruling + the python3.12 proxy shim). Weights pulled (4B 2.9 GB rev `32f3e8e…`;
+  9B 5.6 GB rev `938d891…`). **Key results:** (1) the survey's `mlx_vlm` risk is **RETIRED** —
+  both are multimodal `Qwen3_5ForConditionalGeneration` but mlx-lm 0.31.3's `qwen3_5` module
+  `sanitize()` strips vision and serves **text-only**; no fallback engine, no repair shim
+  (native Qwen tool-call parser emits clean OpenAI `tool_calls` through the passthrough proxy).
+  (2) **4B PASS** — serves, valid tool-calls, engaged 12 steps/240 s, no OOM. (3) **9B PASS but
+  slow** — serves/valid tool-calls/no-OOM-at-tier-4, but thinking-mode made step 0 alone take
+  **204 s** (~half the 4B decode speed). **NEW 24.3 design fork surfaced:** Qwen3.5 ships
+  **thinking-mode ON by default** (155 reasoning tokens on a trivial prompt vs 6 with
+  `enable_thinking=false`) — material for the 4B, near-blocking for the 9B on wall-clock.
+  Decide thinking ON vs OFF (record as a covariate) before the scored run. (Smoke `--timeout`
+  240/300 s were deliberately tight; 24.3 uses the 600 s default.)
 - [ ] **24.3 Local-harness A/B — the actual evidence.** Serve each shortlisted candidate
       **sequentially** (one model loaded at a time, proxy in passthrough for non-Gemma),
       evaluate the **FULL battery up front** (full pass/8 + item-23 shaped-T3 + T1/T2 micro)
@@ -1257,6 +1272,10 @@ them for a head-to-head local A/B against the QAT-Gemma-4 baseline.
       survey: ranked candidates, external benchmarks with citations, MLX/quant/16 GB-fit
       notes, per-candidate release dates, the [lit-only] tag. **v2 is the live shortlist;
       v1 is retained for history.**
+- [x] **Added** `docs/item24-feasibility-notes.md` (2026-06-28) — the 24.2 build-time
+      feasibility-gate results MEASURED on this machine: `mlx_vlm`-risk-retired loader finding,
+      per-candidate serve/tool-call/engagement/OOM table, and the thinking-mode-default finding
+      that becomes the open 24.3 design fork.
 - [ ] **Update** `docs/opencode-local.md` (master doc) — record item 24's adopt/reject
       outcome (model swap: adopted / partial / rejected) once 24.3 closes.
 - [ ] **Update** `CHANGELOG.md` only when item 24 closes (item-17/19/21 pattern).
