@@ -54,6 +54,18 @@ MacBook Air**. Sizing the QAT 4-bit variants by resident weights:
 To try a bigger size on a larger machine, override the model (see below); E4B
 stays the committed default for the 16 GB Air.
 
+**A different-family swap was evaluated and rejected (TODO item 24, 2026-06-29).**
+The newest small-model shortlist — the **Qwen3.5** dense series (4B/9B) — was A/B'd
+against this Gemma baseline on the local harness, swapping only the served model.
+Neither candidate cleared the baseline: **Qwen3.5-4B = 0.3/11**, **Qwen3.5-9B = 0.0/11**
+vs the recorded **Gemma 0/8** (verdict (iii) — the model-swap lever is rejected; full
+write-up `docs/item24-feasibility-notes.md`, survey `docs/small-model-selection-research-v2.md`).
+Two caveats keep the negative honest: a **quant-method confound** (the Qwen builds are
+PTQ-4bit vs Gemma's QAT-4bit), and the Qwen wall here was **wall-clock/latency, not
+engagement** — both Qwen models *engaged and edited* but were too slow to finish within
+the 600 s cap on this 16 GB M1 (the 9B timed out on 100% of runs). So a faster host could
+plausibly revisit this; on *this* machine, Gemma-4-E4B QAT remains the right default.
+
 ### Why mlx-lm runs isolated via `uvx` (not a project dependency)
 
 `mlx-lm` requires `transformers>=5`, but the **inbox** privacy stack pins

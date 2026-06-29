@@ -432,9 +432,29 @@ cmd_pull() {
 _start_server() {
   local label="$1" path="$2" serve_port="$3" pid_file="$4" log_file="$5"
   echo "Starting $label on 127.0.0.1:$serve_port (offline; logs: $log_file)…"
+  # Optional default chat-template kwargs forwarded to the tokenizer's
+  # apply_chat_template (item 24: e.g. MLX_CHAT_TEMPLATE_ARGS='{"enable_thinking":false}'
+  # to serve a thinking-capable model — Qwen3.5 — with thinking OFF by default, so the
+  # default request path matches non-thinking baselines without the client having to send
+  # chat_template_kwargs). Off by default => Gemma baseline serving is byte-unchanged.
+  # Bash-3.2-safe empty-array expansion (macOS /bin/bash + set -u).
+  local extra_args=()
+  if [ -n "${MLX_CHAT_TEMPLATE_ARGS:-}" ]; then
+    extra_args=(--chat-template-args "$MLX_CHAT_TEMPLATE_ARGS")
+  fi
+  # Optional raw mlx_lm.server flags appended verbatim (item 24.3 OOM fix: the 4B
+  # K=3 run crashed when the prompt cache climbed unbounded to 4.6 GB / 10 seqs —
+  # cap it with MLX_SERVER_EXTRA_ARGS='--prompt-cache-bytes <N> --prompt-concurrency 1'.
+  # Word-split intentionally (multiple flags); off by default => baseline byte-unchanged.
+  # restart_server() re-runs `mlx.sh up`, so an exported value survives OOM restarts.
+  if [ -n "${MLX_SERVER_EXTRA_ARGS:-}" ]; then
+    # shellcheck disable=SC2206  # intentional word-split of a flag string (bash)
+    extra_args+=($MLX_SERVER_EXTRA_ARGS)
+  fi
   # HF_HUB_OFFLINE=1 => no model-hub egress; uvx --offline => no PyPI egress.
   HF_HUB_OFFLINE=1 nohup uvx $UVX_OFFLINE_FLAG --from "mlx-lm==$MLX_LM_VERSION" "$SERVER_TAG" \
     --model "$path" --host 127.0.0.1 --port "$serve_port" \
+    ${extra_args[@]+"${extra_args[@]}"} \
     >"$log_file" 2>&1 &
   echo $! >"$pid_file"
   for _ in $(seq 1 60); do

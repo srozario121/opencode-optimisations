@@ -1,0 +1,8 @@
+{
+  "name": "model-qwen3.5-9b",
+  "description": "item 24.2 candidate arm — SWAP THE SERVED MODEL to Qwen3.5-9B (mlx-community/Qwen3.5-9B-MLX-4bit, rev 938d8919941c6e7efd3c7150eff7fe9d12afa631, ~5.98 GB on disk in 2 shards, 4-bit group-size-64). The single lever varied vs the recorded Gemma-4-E4B QAT baseline is the served model; harness/tiers/shaped-T3 reward/sampling held fixed. Selected at the SERVE LAYER: `MLX_MODEL=mlx-community/Qwen3.5-9B-MLX-4bit MLX_REVISION=938d8919941c6e7efd3c7150eff7fe9d12afa631 make mlx-pull && ... mlx-up` (see SERVE-RECIPES-item24.md); harness_eval.py auto-detects the served id. SAMPLING/RULES ONLY. LOADER FEASIBILITY (24.2a, CONFIRMED): multimodal Qwen3_5ForConditionalGeneration, but mlx-lm 0.31.3's qwen3_5 module sanitize() strips vision and serves TEXT-ONLY from text_config; NO mlx_vlm fallback needed. PROXY: non-Gemma => PASSTHROUGH (MLX_PROXY_REPAIR=0). QUANT: PTQ 4-bit vs QAT baseline => quant-method-confound flag on any negative. **EXPLICIT OOM RISK (item-24 design decision):** ~5.98 GB weights + KV at the 40-50K-token Metal-OOM ceiling on the 16 GB M1 is tight; if it OOMs at serve or mid-rollout, record a feasibility NULL rather than chasing it (do NOT widen the budget). Sampling left empty = opencode/model defaults.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null
+}

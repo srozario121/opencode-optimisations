@@ -33,7 +33,39 @@ claude-mem memory and the `docs/` research.
   ⚠ **Did NOT transfer to the full harness** — see item 16 (in `TODO.md`).
 - **15** — Extracted the opencode stack into this standalone published repo. **= this repo.**
 
-## Done (items 16, 17, 18, 19, 20, 21, 22, 23)
+## Done (items 16, 17, 18, 19, 20, 21, 22, 23, 24)
+
+- **24** — **Small-model survey + model-swap A/B — closed 2026-06-29, verdict (iii):
+  no candidate beats the frozen Gemma baseline on this harness; the model-swap lever is
+  REJECTED.** The single lever varied was the served model (Gemma-4-E4B QAT → candidate),
+  harness/tiers/shaped-reward/sampling held fixed.
+  - **24.1 — survey (`docs/small-model-selection-research-v2.md`, [lit-only]).** A
+    latest-release refresh retired the v1 shortlist (all superseded/off-budget) and named the
+    **Qwen3.5 small dense series** as the A/B shortlist (4B/9B [2026-03-02]). Tool-calling
+    literature came back **blank** — every external BFCL/SWE/Aider claim was refuted under
+    adversarial verification, so only the local run could rank them.
+  - **24.2 — feasibility gate: both PASS.** Both checkpoints serve **text-only** on mlx-lm
+    0.31.3 (its `qwen3_5` `sanitize()` drops the vision tower → the survey's `mlx_vlm`-fallback
+    risk is retired) through the passthrough proxy with valid native tool-calls (no repair
+    shim). Surfaced the **thinking-mode-ON default** (155 vs 6 tokens) → 24.3 runs thinking OFF
+    via a new serve-layer `MLX_CHAT_TEMPLATE_ARGS` (recorded covariate). `docs/item24-feasibility-notes.md`.
+  - **24.3 — local A/B (the evidence).** **4B = 0.3/11** (spread 0–1; engages + edits,
+    made_edit 0.30, timeout-bound 29/33, one real `sympy` fix) · **9B = 0.0/11** (spread 0–0;
+    **100% timeout** 33/33, made_edit 0.03 — too slow on the 16 GB M1 to finish an edit) vs the
+    **Gemma 0/8** baseline. **Neither clears its spread → (iii).** Two caveats sharpen the
+    negative: (1) **quant-method confound** (PTQ candidates vs the QAT baseline) unresolved;
+    (2) the Qwen wall is **wall-clock/latency, NOT engagement** — both models engage and edit
+    (unlike Gemma's no-tool-stop), so this is a **hardware-bound** negative specific to this
+    machine, distinct from Gemma's capability-bound one; a faster host or a higher timeout (off
+    the frozen protocol) could move it.
+  - **OOM-safe harness deliverable (lasting).** The first 24.3 run **crashed the session** — the
+    MLX prompt cache climbed unbounded (3.95→4.60 GB) and Metal-OOM-killed the **4B** (not the
+    OOM-flagged 9B); root cause = per-conversation KV-cache accumulation, not model size or
+    K-repeat parallelism. Fixed with a `MLX_SERVER_EXTRA_ARGS` passthrough in `mlx.sh`
+    (`--prompt-concurrency 1 --prompt-cache-bytes` cap) + a `/v1/models` model-guard (bare
+    `mlx.sh up` silently serves the default Gemma) + the `/tmp/py-shim` python3.12 shim. Both
+    arms then ran 66 instance-runs to completion with **zero OOM**. Drivers:
+    `scripts/.../run_24_3_{4b,9b}_serialized.sh` template.
 
 - **20** — **Planning-first phase / orchestration topology — closed 2026-06-28, verdict
   (ii) PARTIAL: planning-first does not transfer; multi-agent is the only arm that ever

@@ -1,0 +1,8 @@
+{
+  "name": "model-qwen3.5-4b",
+  "description": "item 24.2 candidate arm — SWAP THE SERVED MODEL to Qwen3.5-4B (mlx-community/Qwen3.5-4B-MLX-4bit, rev 32f3e8ecf65426fc3306969496342d504bfa13f3, ~3.06 GB on disk, 4-bit group-size-64). The single lever varied vs the recorded Gemma-4-E4B QAT baseline is the served model; harness/tiers/shaped-T3 reward/sampling held fixed. The model is selected at the SERVE LAYER, not here: `MLX_MODEL=mlx-community/Qwen3.5-4B-MLX-4bit MLX_REVISION=32f3e8ecf65426fc3306969496342d504bfa13f3 make mlx-pull && ... mlx-up` (see scripts/harness_configs/SERVE-RECIPES-item24.md); harness_eval.py auto-detects the served id via detect_model(base_url). This config therefore carries SAMPLING/RULES ONLY. LOADER FEASIBILITY (24.2a, CONFIRMED): the checkpoint is the multimodal Qwen3_5ForConditionalGeneration, but mlx-lm 0.31.3 has a qwen3_5 module whose sanitize() drops vision_tower/model.visual weights and loads the TextModel from text_config — so it serves TEXT-ONLY on the frozen mlx-lm 0.31.3 path; NO mlx_vlm fallback needed. PROXY: non-Gemma model => repair proxy runs in PASSTHROUGH (MLX_PROXY_REPAIR=0, in path for tracing only; Gemma's tool-call parser does not apply). Tool-call validity is measured on Qwen's native mlx-lm parser output. QUANT: PTQ 4-bit vs the QAT baseline => any negative verdict carries the quant-method-confound flag (item-24 design decision). Sampling left empty = opencode/model defaults, for like-for-like with the baseline.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null
+}
