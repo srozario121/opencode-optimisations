@@ -1247,6 +1247,15 @@ them for a head-to-head local A/B against the QAT-Gemma-4 baseline.
       Gemma on this harness → the 4–7B class is a wall *here* and BigPickle-class (item 22)
       is the only thing that clears it — a valid closed negative that re-justifies the
       original frozen-Gemma choice.
+      **— 4B ARM DONE 2026-06-29** (label `qwen35-4b-K3-serialized`, K=3×11, OOM-safe serialized
+      relaunch after the first attempt OOM'd the 4B on unbounded KV-cache; fix = mlx-server cache
+      caps + model-guard + py-shim, see `docs/item24-feasibility-notes.md`). **Result 0.3/11
+      (spread 0–1) → does NOT clear spread → not distinguishable from Gemma 0/8 ⇒ tracking (iii)
+      for the 4B** (quant-confound caveat applies). Notable: failure mode is **timeout-bound, not
+      no-edit** (29/33 timeout; engages+edits, `dropped`=0, `made_edit`=0.30) — Qwen3.5-4B is
+      wall-clock-bound on the 16 GB M1, a *different* wall than Gemma's no-tool-stop.
+      **9B arm still TODO** (reuse the serialized driver w/ 9B MLX_MODEL/REVISION). 24.3 closes
+      after the 9B arm; final verdict pending.
 
 ### Measurement plan (item 24)
 

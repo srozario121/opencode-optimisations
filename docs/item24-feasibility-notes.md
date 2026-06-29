@@ -84,3 +84,56 @@ Both eligible for 24.3. `mlx_vlm` fallback NOT needed; repair shim NOT needed (p
 suffices). **Open 24.3 design decision: thinking ON vs OFF** (covariate to record either way) —
 material for the 4B, near-blocking for the 9B on wall-clock. Smoke timeouts (240 s/300 s) were
 deliberately tight; the scored run uses the 600 s default.
+
+## 24.3 — first scored run OOM'd: the **4B**, on KV-cache growth (NOT the 9B)
+
+The first 24.3 attempt (`harness-eval/runs/qwen35-4b-K3-r1/`, K=3, thinking OFF) **crashed the
+session** ~21:27 on 2026-06-28. Forensics (`mlx-server.log`):
+- The candidate **live at the crash was Qwen3.5-4B** (passthrough proxy, `repair=OFF`) — **not**
+  the OOM-flagged 9B (the 9B only ran an earlier smoke at 20:17 and was idle).
+- The MLX **prompt cache climbed unbounded**: `10 sequences` growing **3.95 → 4.11 → 4.20 → 4.39
+  → 4.60 GB** over the final two minutes, then the log **stops abruptly mid prompt-processing**
+  (`332/332`) — a Metal OOM kill, no graceful shutdown. Weights (~2.9 GB) + 4.6 GB cache +
+  opencode/node + OS crossed the ~16 GB ceiling. Got through ~9 of 11 instances first.
+
+**Correction to the item-24 risk model:** the OOM did **not** come from model size (the small 4B
+hit it) nor from K-repeat parallelism (repeats and instances both run *sequentially*, and the
+harness already restarts the server on `reason="oom"`). It came from **mlx-lm's per-conversation
+prompt/KV cache accumulating across long multi-turn rollouts**. The binding constraint is
+**cache bytes × prompt-concurrency**, not parameter count.
+
+**Serialized relaunch (fix shipped):** `mlx.sh` `_start_server` now forwards a new
+`MLX_SERVER_EXTRA_ARGS` env (mirrors the `MLX_CHAT_TEMPLATE_ARGS` pattern; survives OOM restarts
+because `restart_server()` re-runs `mlx.sh up`). Relaunch driver:
+`scratchpad/run_24_3_4b_serialized.sh` exports
+`--prompt-concurrency 1 --prompt-cache-bytes 3221225472 (3 GiB) --prompt-cache-size 2` +
+thinking OFF, then runs `run --config model-qwen3.5-4b --repeats 3 --timeout 600`. 3 GiB cap +
+2.9 GB weights ≈ 6 GB resident, ~10 GB headroom. Per the OOM-null discipline: if an instance
+*still* OOMs under the cap, that is a recorded null, not a reason to widen the budget.
+
+**OOM fix VALIDATED + 24.3 4B arm complete (2026-06-29, label `qwen35-4b-K3-serialized`).**
+The same config (hash `d4d0d00c543c`) that crashed the whole session ran the full **K=3 × 11 =
+33 instance-runs to completion with ZERO OOM** (per-instance reasons: 1 PASS / 29 timeout / 3
+tests-failed; `dropped`/`degen` = 0). The 3 GiB cache cap held — no `[recover]` bounce was ever
+needed. (Three real bugs were fixed along the way to a clean launch: bare `mlx.sh up` served the
+default *Gemma* not Qwen → added serve-layer env + a `/v1/models` guard that aborts on the wrong
+id; the proxy hit the pyenv python-wedge → `/tmp/py-shim` python3.12 shim, see
+[[mlx-proxy-python-wedge]].)
+
+**Result: pass mean 0.3/11 (spread 0–1 over [1,0,0]).** The lone pass was `sympy` (episode
+489.5 s, F2P 1/1 — a real fix, under the 600 s cap). By the harness's own rule a delta must clear
+the spread, so **0.3/11 does NOT clear [0–1] → not distinguishable from the Gemma 0/8 baseline**
+on pass-rate. The quant-confound flag (PTQ-4bit vs QAT) still applies to the negative.
+
+**But the failure *signature* is materially different from Gemma — and that's the real finding.**
+Qwen3.5-4B is **timeout-bound, not no-edit/dropped-bound**: 29/33 runs timed out, yet `dropped`=0,
+`made_edit`=0.30 (0.18–0.45), `degen`=0, ~10–11 steps/episode. It **engages and edits** (unlike
+the Gemma baseline whose dominant mode is no-tool-stop / `dropped`≈0.38) — it just can't *finish*
+within 600 s even with thinking OFF. This mirrors the 24.2 "9B brutally slow" finding: the
+Qwen3.5 family is **wall-clock-bound on this 16 GB M1**, not engagement-bound. The obvious next
+lever (longer timeout) is OFF the frozen protocol and expensive — record as a covariate, don't
+silently widen.
+
+**24.3 status:** 4B arm DONE (above). **9B arm not yet run** under the serialized harness — when
+it runs, reuse `scratchpad/run_24_3_4b_serialized.sh` with the 9B MLX_MODEL/MLX_REVISION (recipe
+candidate 2) and the same caps; expect timeout to dominate even harder (step 0 = 204 s in smoke).
