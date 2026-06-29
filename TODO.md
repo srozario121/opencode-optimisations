@@ -1,13 +1,19 @@
 # TODO — opencode-optimisations
 
-The repo's running work-ledger. **Items 24, 25, 26, 27 and 28 are the open work** (24 = the
-model-swap survey, added 2026-06-27; 25 = GEPA-optimise the multi-agent planning prompt;
-26 = evaluate codegraph-class codebase-exploration tools for planning — both added
-2026-06-28, following item 20; 27 = extend GEPA to optimise ONLINE optimisee models
-(BigPickle-as-example, configurable), added 2026-06-28; 28 = a formal-verifier stage in a
+The repo's running work-ledger. **Items 25, 26, 27 and 28 are the open work** (25 = GEPA-optimise
+the multi-agent planning prompt; 26 = evaluate codegraph-class codebase-exploration tools for
+planning — both added 2026-06-28, following item 20; 27 = extend GEPA to optimise ONLINE optimisee
+models (BigPickle-as-example, configurable), added 2026-06-28; 28 = a formal-verifier stage in a
 plan→verify→implement multi-agent loop, 900 s cap, added 2026-06-28). **Completed
-items 1–23 now live in `CHANGELOG.md`** (items 18, 19 and 20's
-full ticked detail is also kept inline below for reference). **Item 20 (planning-first /
+items 1–24 now live in `CHANGELOG.md`** (items 18, 19 and 20's
+full ticked detail is also kept inline below for reference). **Item 24 (small-model survey /
+model-swap A/B) closed 2026-06-29: verdict (iii) — neither Qwen3.5-4B (0.3/11) nor -9B (0.0/11)
+beats the frozen Gemma 0/8 baseline → the model-swap lever is REJECTED; Gemma-4-E4B QAT stays the
+default. Caveats: quant-confound (PTQ vs QAT) + the Qwen wall is wall-clock/LATENCY not engagement
+(both engaged+edited; 9B timed out 33/33 on the 16 GB M1) — a hardware-bound negative, distinct
+from Gemma's capability wall. Lasting deliverable: OOM-safe serialized-relaunch infra
+(`MLX_SERVER_EXTRA_ARGS` cache caps + `/v1/models` model-guard + py-shim) after the first run's
+KV-cache Metal-OOM crashed the session.** **Item 20 (planning-first /
 orchestration topology) closed 2026-06-28: verdict (ii) PARTIAL — planning-first does not
 transfer (arms a/b within spread of bare); the multi-agent counter-arm is the only arm to ever
 land a real T3 fix (22714, 4/6 K=6) at ≈bare cost (refutes 8–15×), but the mean gain does NOT
@@ -1280,7 +1286,7 @@ them for a head-to-head local A/B against the QAT-Gemma-4 baseline.
 
 ### Documentation (item 24)
 
-- [ ] **Add** `docs/small-model-selection-research.md` (v1, 2026-06-27) **and**
+- [x] **Added** `docs/small-model-selection-research.md` (v1, 2026-06-27) **and**
       `docs/small-model-selection-research-v2.md` (v2, 2026-06-28, current) — the 24.1
       survey: ranked candidates, external benchmarks with citations, MLX/quant/16 GB-fit
       notes, per-candidate release dates, the [lit-only] tag. **v2 is the live shortlist;
@@ -1289,9 +1295,11 @@ them for a head-to-head local A/B against the QAT-Gemma-4 baseline.
       feasibility-gate results MEASURED on this machine: `mlx_vlm`-risk-retired loader finding,
       per-candidate serve/tool-call/engagement/OOM table, and the thinking-mode-default finding
       that becomes the open 24.3 design fork.
-- [ ] **Update** `docs/opencode-local.md` (master doc) — record item 24's adopt/reject
-      outcome (model swap: adopted / partial / rejected) once 24.3 closes.
-- [ ] **Update** `CHANGELOG.md` only when item 24 closes (item-17/19/21 pattern).
+- [x] **Updated** `docs/opencode-local.md` (master doc) — recorded item 24's outcome in the
+      Pinned-model section: **model swap REJECTED** (verdict (iii)), with the quant-confound +
+      latency-not-engagement caveats; Gemma-4-E4B QAT stays the committed default.
+- [x] **Updated** `CHANGELOG.md` — item 24 entry added (4B 0.3/11 · 9B 0.0/11 · verdict (iii) ·
+      OOM-safe serialized-relaunch deliverable), header bumped to include item 24.
 
 ### 25. GEPA-optimise the multi-agent PLANNING prompt  ← follows item 20
 
