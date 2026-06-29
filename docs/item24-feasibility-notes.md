@@ -134,6 +134,29 @@ Qwen3.5 family is **wall-clock-bound on this 16 GB M1**, not engagement-bound. T
 lever (longer timeout) is OFF the frozen protocol and expensive — record as a covariate, don't
 silently widen.
 
-**24.3 status:** 4B arm DONE (above). **9B arm not yet run** under the serialized harness — when
-it runs, reuse `scratchpad/run_24_3_4b_serialized.sh` with the 9B MLX_MODEL/MLX_REVISION (recipe
-candidate 2) and the same caps; expect timeout to dominate even harder (step 0 = 204 s in smoke).
+**24.3 9B arm DONE (2026-06-29, label `qwen35-9b-K3-serialized`, driver
+`scratchpad/run_24_3_9b_serialized.sh`, cache cap tightened to 2 GiB for the ~6 GB weights).**
+**Result pass mean 0.0/11 (spread 0–0 over [0,0,0]).** Failure mode is **100% timeout** — all
+**33/33 runs hit the 600 s cap** (episode wall min/median/max = 600.0/600.3/600.9 s), `made_edit`
+collapses to **0.03** (vs the 4B's 0.30): the 9B is so slow on this M1 it rarely finishes even a
+single edit before the cap. **Zero OOM** — the 2 GiB cap held and the documented 9B OOM-risk never
+materialised, because wall-clock kills it long before the KV cache can grow (the binding constraint
+for the 9B was always latency, not memory). thinking-OFF did not rescue it.
+
+## 24.3 CLOSED — verdict (iii): no candidate beats Gemma on this harness
+
+| Arm | pass mean | failure signature | OOM | reads as |
+|---|---|---|---|---|
+| Qwen3.5-4B | 0.3/11 (0–1) | timeout-bound (29/33), but engages + edits (made_edit 0.30), 1 real fix | none | does not clear spread ⇒ ≈ Gemma 0/8 |
+| Qwen3.5-9B | 0.0/11 (0–0) | 100% timeout (33/33), barely edits (made_edit 0.03) | none | worse — pure wall-clock death |
+| Gemma-4-E4B QAT (baseline) | 0/8 | no-tool-stop / churn (dropped ≈ 0.38) | — | the recorded reference |
+
+**Neither Qwen3.5 candidate clears its spread → (iii): the 4–9B class is a wall *here*; only
+BigPickle-class (item 22) clears it — re-justifies the frozen-Gemma choice.** Two caveats sharpen
+the negative: (1) **quant-method confound** (PTQ-4bit candidates vs the QAT baseline) — unresolved;
+(2) the candidates' wall is **wall-clock/latency, NOT engagement** — Qwen3.5 *engages and edits*
+(unlike Gemma's no-tool-stop) but the M1's decode speed at these context lengths can't finish
+within 600 s. This is a **hardware-bound** negative specific to this machine, distinct from Gemma's
+capability-bound one; a faster host or a higher timeout (off the frozen protocol) could move it.
+The serialized-relaunch infra (`MLX_SERVER_EXTRA_ARGS` cache caps + `/v1/models` model-guard +
+py-shim) is the lasting deliverable — it made the OOM-crashing run reproducible to completion.
