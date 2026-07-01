@@ -4,6 +4,7 @@
 .PHONY: sync lint typecheck test check \
         mlx-pull mlx-up mlx-down mlx-status mlx-serve mlx-opencode-config \
         mlx-jaeger-up mlx-jaeger-down mlx-bench mlx-bench-summary \
+        omlx-pull omlx-up omlx-down omlx-status omlx-health omlx-serve \
         harness-eval harness-eval-prepare harness-eval-summary harness-eval-online \
         harness-recommend \
         harness-micro harness-micro-selftest harness-micro-summary
@@ -47,6 +48,30 @@ mlx-serve:
 # Install the opencode provider config pointing at the local server.
 mlx-opencode-config:
 	scripts/mlx.sh opencode-config
+
+# --- omlx serving backend (item 30: omlx + repair proxy, opencode-compatible) ---
+# Drop-in alternative to the mlx-lm stack on the SAME pinned Gemma weights.
+# opencode -> proxy :8080 -> omlx :8088. See scripts/omlx.sh, docs/item24-feasibility-notes.md.
+omlx-pull:
+	scripts/omlx.sh pull
+
+omlx-up:
+	scripts/omlx.sh up
+
+omlx-down:
+	scripts/omlx.sh down
+
+omlx-status:
+	scripts/omlx.sh status
+
+# Block until the front port is fully ready: /v1/models + a warmup completion
+# (item 31 health-gate — used by scripts/run_t3_clean.sh before each isolation run).
+omlx-health:
+	scripts/omlx.sh health
+
+# Foreground omlx server (Ctrl-C to stop), no repair proxy — handy for debugging.
+omlx-serve:
+	scripts/omlx.sh serve
 
 # Jaeger tracing backend on its own (the tracing half of `mlx-up`).
 mlx-jaeger-up:

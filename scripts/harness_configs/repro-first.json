@@ -1,0 +1,9 @@
+{
+  "name": "repro-first",
+  "description": "item 31.3 counter-arm: baseline + an ADDITIVE rules_append (item-23 AGENTS.md-append channel, T2-safe) teaching a reproduce-first localization strategy. Targets the sympy-21627 trace failure mode: the 4B knows the repro but never RUNS it, guess-localizes by reading, anchors on the wrong file, and stops without editing. Pair with HARNESS_AGENT_VENV_ON_PATH=1 so the agent's `python` can import the repo. NOT a default; measured clean vs baseline.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {},
+  "system_prompt": null,
+  "rules_append": "# Debugging a reproducible error\n\nWhen the task is a crash or wrong result with a known triggering input (a traceback, a failing expression, or a function call in the issue):\n\n1. Reproduce FIRST. Write a tiny `repro.py` that triggers the failure, then run it with `python repro.py`. The project's `python` is preconfigured with the repo installed. Do not try to find the bug by reading or grepping alone.\n2. Localize from the traceback. The repeated frames and the last `File \".../x.py\", line N, in <func>` before the error name the exact file and function to fix. Open THAT file — not one you guessed from the issue text.\n3. Fix, then verify. Edit the offending non-test source file, then re-run `python repro.py` and confirm the error is gone.\n\nYou MUST finish by writing an edit to a non-test source file. A textual explanation or a plan is not a fix.\n"
+}
