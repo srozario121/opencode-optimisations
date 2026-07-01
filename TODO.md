@@ -1,12 +1,27 @@
 # TODO — opencode-optimisations
 
-The repo's running work-ledger. **Items 25, 26, 27 and 28 are the open work** (25 = GEPA-optimise
+The repo's running work-ledger. **Items 25, 26, 27 and 28 are the open work** (item 31 closed 2026-06-30,
+verdict (iii) CAPABILITY WALL — clean-serving infra built + both item-30 infra failures resolved, but
+sympy-21627 still FAILs `no-edit` at 1800s from clean state with budget to spare ⇒ the 4B capability
+ceiling, not latency; re-confirms only-BigPickle-clears-T3). (30 = fix omlx's
+gemma4 failure modes to reach mlx-lm parity — programmatic-first, prompt-fallback — added 2026-06-30
+following item 29's deep-dive; conditional on item 29's net-benefit calculus flipping. 25 = GEPA-optimise
 the multi-agent planning prompt; 26 = evaluate codegraph-class codebase-exploration tools for
 planning — both added 2026-06-28, following item 20; 27 = extend GEPA to optimise ONLINE optimisee
 models (BigPickle-as-example, configurable), added 2026-06-28; 28 = a formal-verifier stage in a
 plan→verify→implement multi-agent loop, 900 s cap, added 2026-06-28). **Completed
-items 1–24 now live in `CHANGELOG.md`** (items 18, 19 and 20's
-full ticked detail is also kept inline below for reference). **Item 24 (small-model survey /
+items 1–24 + 29 now live in `CHANGELOG.md`** (items 18, 19 and 20's
+full ticked detail is also kept inline below for reference). **Item 29 (omlx serving-backend probe)
+closed 2026-06-29: verdict (i) ADOPT — Stage-1 gate PASSED all four checks (byte-identical
+safetensors load, `/v1` + native `gemma4` tool-call round-trip, offline under blocked egress). The
+plain backend swap is +17 % (below the 20 % bar), but **omlx + VLM-MTP speculative decoding
+(block_size=3) with the matched `gemma-4-E4B-it-qat-assistant-bf16` drafter = 15.63 tok/s = +37 % over
+mlx-lm**, lossless (target verifies @ temp 0) at tool-call parity → clears the adopt bar. Fairness
+caveat: mlx-lm 0.31.3's `--draft-model` can't load any available gemma-4 draft (multimodal loader wall
+— the item-24 wall), so omlx's win rests on its integrated MTP path. Tiered prefix cache also gives
+~5.6× warm re-prefill on repeated prefixes (agentic wall-clock). `make omlx-up` integration DEFERRED.
+Weights stayed bit-identical (speculative decoding is lossless) so item 24's no-model-swap closure
+stands.** **Item 24 (small-model survey /
 model-swap A/B) closed 2026-06-29: verdict (iii) — neither Qwen3.5-4B (0.3/11) nor -9B (0.0/11)
 beats the frozen Gemma 0/8 baseline → the model-swap lever is REJECTED; Gemma-4-E4B QAT stays the
 default. Caveats: quant-confound (PTQ vs QAT) + the Qwen wall is wall-clock/LATENCY not engagement
@@ -56,6 +71,448 @@ Lasting deliverable: the shaped-reward + `gepa-t3-gate` machinery + the 6-instan
 ---
 
 ## Open
+
+### 31. Push one T3 item past the threshold (sympy-21627) — clean per-test serving + infra-failure investigation  ✅ CLOSED 2026-06-30 (verdict iii: CAPABILITY WALL)
+
+> **CLOSED — verdict (iii) CAPABILITY WALL, decisively, from clean serving state.** The clean-serving
+> infra (31.0) was built and proven live: `scripts/run_t3_clean.sh` (down → clear ALL cache namespaces →
+> up → health-gate → run → PID/load-ts audit), an `omlx.sh health` gate (`/v1/models` + warmup
+> completion through the proxy), a proxy upstream-readiness retry (`OMLX_PROXY_UPSTREAM_READY_S`), MTP
+> cache-dir namespacing, and `HARNESS_NO_MIDRUN_RESTART=1`. **Both item-30 infra failures resolved on the
+> clean path:** the server-reload race is GONE (health-gate warmup ~10s, episode engages at step 1; proxy
+> retry available) and the layer-count collision is REFRAMED — it is *within-serve* (the 4-layer MTP
+> drafter shares the prefix-cache keyspace with the 24-layer main model) but **benign on a clean cache** (3
+> WARNINGs / 13 hits at 600s, 9 / 35 at 1800s, 0 fatal/OOM/abort); item-30's "invalidate/abort thrash" was
+> the *severe* stale-dir form, removed by clean-start + namespacing. **Measurement (31.2):** 600s → FAIL
+> timeout, 5 tool-rounds, no edit (latency-starved at small budget — inconclusive). **1800s (decisive) →
+> FAIL `no-edit`, terminated NATURALLY at 874s with ~925s budget UNSPENT** (`timed_out=False`,
+> `saw_exit_loop=True`), 12 tool-rounds, `made_edit=False`, `model_patch_bytes=0`, no degenerate loop. With
+> 3× budget on a healthy server the model was NOT latency-bound — it explored then *chose to stop* without
+> attempting a fix ⇒ the 4B capability ceiling (explore-then-give-up), the same regime as mlx-lm's 0/8 T3.
+> **31.3 (lever probe) moot/skipped** (gate was "only if reachable"; not reachable). Re-confirms items
+> 16/19/20/23/24 — only BigPickle clears real T3. Lasting deliverable: the clean-serving isolation infra +
+> the two infra fixes. Full detail: `docs/item24-feasibility-notes.md` (item-31 §) + `CHANGELOG.md`.
+
+**Goal.** Get a single, well-understood T3 instance — **`sympy__sympy-21627`** (the `is_zero`
+infinite-recursion bug) — from FAIL to **PASS** (F2P 1/1), or prove conclusively that it is
+unreachable on this 4B/16-GB stack. This is the focused follow-on to item 30's T3 deep-dive: we
+already removed one spurious blocker (the grep `include` directory-glob bug) and saw the model advance
+to the read stage, but it still fails at the latency+capability wall. This item isolates *which* wall,
+instance by instance, under a clean harness.
+
+**Hard methodology requirement — clean serving state per test.** Every measurement in this item MUST
+**spin the serving backend fully down and back up again before the run** (server :8088 + repair proxy
+:8080), and start from a **cleared prefix-cache dir**. Rationale: item 30 produced TWO false/contaminated
+T3 results from dirty state — (a) a corrupted prefix cache (a 4-layer MTP block polluting the 24-layer
+main cache → invalidate/abort thrash) and (b) a server-reload race where opencode never issued a request
+(server saw 0 requests for the whole 1800 s). No run in this item is valid unless it began from a
+confirmed-healthy, freshly-loaded server. Build this into the runner (not a manual step): down → clear
+cache → up → **health-gate (poll `/v1/models` until ready AND a tiny warmup completion succeeds)** →
+only then launch opencode. Record server PID + model-load timestamp in each run's log so contamination
+is auditable after the fact.
+
+**Why now / evidence (item 30, 2026-06-30).** Read the full sympy-21627 trajectory: the model engaged
+but never read/edited because `grep {include:"sympy/"}` → `rg --glob sympy/` matched 0 files → false
+"No matches" on a symbol with 954 real hits. Fixed `admin/.opencode/tools/grep.ts` (wildcard-free
+`include` now pushes `--glob base` + `--glob base/**`). Re-test then reached `read expr.py:618` for the
+first time, then ran out of the 600 s budget mid-investigation (FAIL timeout). The decisive @1800 s
+latency-vs-capability isolation failed twice on infra (above), so the wall attribution is still open.
+
+### Tasks
+
+- [x] **31.0 Clean-serving harness wrapper — DONE.** `scripts/run_t3_clean.sh`: for each repeat
+      `omlx down` → clear ALL prefix-cache namespaces → `omlx up` → health-gate (`omlx.sh health` /
+      `make omlx-health`: `/v1/models` + a warmup completion through the proxy) → run the instance →
+      record server PID + model-load (process-start) ts for contamination audits. Sets
+      `HARNESS_SERVE_BACKEND=omlx` + `HARNESS_NO_MIDRUN_RESTART=1` so the harness never bounces the
+      server mid-pass. `make check` + selftest green.
+- [~] **31.1 Infra-failure investigation (precondition — fix before trusting any T3 number).**
+      Defensive fixes IMPLEMENTED; live reproduce-and-confirm is the remaining (heavy) step.
+      - [x] **Prefix-cache / MTP layer-count collision.** Fix: the SSD prefix-cache dir is now NAMESPACED
+            by MTP config (`omlx-cache-mtp3` / `omlx-cache-nomtp` in `omlx.sh`), so a 4-layer-MTP cache can
+            never be re-read by a 24-layer serve → kills the cross-serve "block has 4 layers, expected 24"
+            collision; the wrapper also clears every namespace per run. (Within-serve drafter/main keyspace
+            sharing, if any, still needs a live repro to rule out — open.)
+      - [x] **Server-reload request race.** Fix: (a) the 31.0 health-gate forces a warmup decode through
+            the proxy before opencode runs, and (b) `omlx_repair_proxy.py` retries a refused upstream
+            (`OMLX_PROXY_UPSTREAM_READY_S`, default 90s) instead of 502-ing the first call (+3 unit tests).
+            Live confirm with a long-timeout run that actually issues requests is the remaining step.
+      - [x] **Serving fragility under repeated/long runs (16 GB).** Across the 600s + 1800s clean runs:
+            0 fatal/OOM/abort, healthy cache (13/35 hits), natural termination — no wedge/accumulation
+            observed on the clean path. (The benign MTP layer-mismatch warning is the only residual.)
+- [x] **31.2 Clean re-measure at standard + extended budget — DONE.** 600s → FAIL timeout, 5 tool-rounds,
+      no edit (latency-starved at small budget, inconclusive). **1800s (decisive) → FAIL `no-edit`,
+      terminated NATURALLY at 874s with ~925s budget UNSPENT** (`timed_out=False`, `saw_exit_loop=True`),
+      12 tool-rounds, `made_edit=False`, `model_patch_bytes=0`, no degenerate loop. Not latency-bound (time
+      to spare) and no edit attempted ⇒ **(iii) CAPABILITY WALL.**
+- [~] **31.3 Lever probe — SKIPPED (moot).** Gate was "only if 31.2 shows it's reachable"; 31.2 shows the
+      threshold is not reachable on this 4B (capability, not latency/budget), so no T2-safe lever can close
+      a capability wall — nothing to probe.
+
+### Verdict gates  → **(iii) CAPABILITY WALL** (selected 2026-06-30)
+- **(i) PASS** — sympy-21627 reaches F2P 1/1 from clean state (record which lever, if any). *(not met)*
+- **(ii) LATENCY-BOUND** — reaches a *correct* edit only at extended budget ⇒ threshold is a serving-speed
+  problem, not capability; points back at omlx/MTP/cache throughput work. *(not met — 1800s terminated at
+  874s with budget unspent, so more serving speed would not have helped)*
+- **(iii) CAPABILITY WALL** ✅ — even with clean infra + extended budget it produces a wrong/no edit ⇒
+  confirms items 16/19/20/23/24 (only BigPickle clears real T3); closed as a re-confirmation.
+
+### Documentation
+- [x] Updated `docs/item24-feasibility-notes.md` (item-31 §) with the clean-state verdict (supersedes the
+      "infra-flaky, inconclusive @1800 s" note).
+- [x] Recorded the infra fixes (cache-namespacing / health-gate / proxy-retry / no-midrun-restart) in the
+      omlx serving docs; `CHANGELOG.md` + memory updated on close.
+
+### 30. Fix omlx's gemma4 failure modes to reach mlx-lm parity (programmatic-first, prompt-fallback)  ✅ IMPLEMENTED 2026-06-30 (verdict: PARITY+ via programmatic fix)
+
+> **RESULT — omlx+fix EXCEEDS the mlx-lm 0.88 adopt-parity bar at T2, pure-programmatic (no prompt
+> lever), memory-stable WITH the prefix cache on.** Headline K=5 T2: **omlx+temp-parity = 1.000
+> (spread 0.000)** vs mlx-lm 0.882 (spread 0.118) vs the old temp-1.0 omlx-fix2 0.776 (spread 0.588).
+>
+> **Cat-2 was a misdiagnosis → real root cause found.** The TODO assumed omlx narrates because its
+> gemma4 input formatting uses non-standard markers. **False:** omlx renders input via the
+> checkpoint's own `chat_template.jinja` correctly (confirmed by reading omlx source +
+> capturing/diffing the rendered prompt; the model emits clean native `<|tool_call>` even on folded
+> multi-turn requests). The real cause is a **serving-default temperature confound**: `mlx_lm.server`
+> defaults missing-temperature requests to **0.0 (greedy)**, omlx to its settings.json **1.0**. The
+> harness sends no temperature, so the whole item-29/30 omlx-vs-mlx-lm comparison was unfair — omlx
+> ran stochastic. At temp 1.0 the weak 4B narrates + emits garbage grep patterns + has huge variance;
+> **at temp 0 narration vanishes** (verified by replaying the captured request). Fix = a programmatic
+> **temperature-parity stamp** in `omlx_repair_proxy.py` (input-side, mirrors mlx-lm's default;
+> default greedy). Failure-mode classifier on the K=5 arm: **Cat-1 (A/B/C eos+text-tool-calls) = 0,
+> Cat-2 (D narration) = 0** (H/I shared-quality persist, benign — all runs still 17/17).
+>
+> **Prompt steer UNNECESSARY** (programmatic > prompt fully): temp-parity alone hits 1.0;
+> `omlx-toolsteer.json` kept available but NOT in the default path. mlx-lm untouched ⇒ no regression.
+>
+> **Prefix cache RE-ENABLED + swept (cache-vs-stability resolved).** With greedy temp-parity removing
+> the OOM-driving narration, the prefix cache is ON by default, **stable** (0 prefill rejections, 0
+> evictions, accuracy preserved). Sweep over the tunables: **~27× warm re-prefill** (cold ~56s → warm
+> ~2s); hot-cache SIZE non-critical (SSD-only ≈ 4GB) so kept small (2GB) for 16GB-fit;
+> **`initial-cache-blocks=512` = best lever (+22% → ~33×)**; `memory-guard balanced` no gain (keep
+> safe); MTP coexists. Tuned defaults give **~35× warm** end-to-end. (Caveat: the prefix cache key is
+> model+path-scoped — a stale/incompatible cache dir from a different serve path can stall the first
+> turn; the controller's consistent path + per-run clean start avoids it.)
+>
+> **Deliverables:** hardened `scripts/omlx_repair_proxy.py` (eos-strip + native/text tool-call repair
+> + temp-parity stamp + no-think lever + capture + BrokenPipe-safe) with 17 unit tests; `scripts/omlx.sh`
+> controller + `make omlx-{pull,up,down,status,serve}`; `restart_server` generalized via
+> `HARNESS_SERVE_BACKEND`; sweep tooling (`scratchpad/{cache_bench,cache_stats,t2_stats,failure_modes}.py`,
+> `run_30_*`). `make check` + harness selftest green. **SWE/T3 no-regression DEMONSTRATED** after the
+> streaming-repair fix (below): omlx+fix **engages T3 to step=10, terminates naturally at 509s, FAIL
+> (no-edit)** = the shared capability wall (explores via grep/read, can't produce a fix — same regime
+> as mlx-lm's 0/8 T3). Before the fix it hung at step=0 (mechanical, not capability).
+>
+> **Streaming-repair proxy (T3 mechanical fix).** Root cause of the step=0 hang: the proxy FORCED
+> non-streaming (to repair the full turn), so opencode got nothing until a long T3 generation finished
+> → timeout. Fix: `OMLX_PROXY_STREAM_REPAIR` (default on) passes omlx's SSE through incrementally
+> (mirrors mlx-lm's stream-through), stripping `<eos>` per content delta; text-tool-call repair isn't
+> needed on the stream path because temp-parity makes omlx emit native structured `tool_calls`.
+> Validated: T2 still 3/3 (1.0, no regression — tool calls intact via streaming); T3 engages step 0→10.
+
+Original brief (kept for context):
+
+**Goal.** Productionise the staged fix that item 29's deep-dive validated, so a serving swap to
+**omlx** matches **mlx-lm + repair proxy** on real agentic task success (T2 ≥ 0.88 at memory
+stability), by resolving each omlx-specific failure-mode category. **Preference order:
+programmatic resolution > prompt resolution** — only fall back to a prompt lever when no clean
+programmatic fix exists (consistent with item-18/19: additive terse rules help, gutting hurts).
+
+**Why now / evidence (item 29, this session).** As a drop-in, omlx **halves** task success on the
+tier where the model normally passes — **T2 0.235 vs mlx-lm 0.882** — because its `gemma4`
+output/​input adapter mishandles Gemma's tokens and tool-call format (the mlx-lm **repair proxy is
+load-bearing**; omlx has no equivalent). A staged fix recovered ~84 % of the gap: **eos-strip →
+0.55**, **+ tool-call-text parsing + prompt steering → 0.777** (one run hit **1.0**), with tool
+engagement restored to parity (2.3 vs 2.4 calls/ep, 0 narration, 0 `<eos>` leak). Trace-grounded
+failure-mode enumeration + the validated partial fixes are the inputs to this item. *(Note: item
+29's headline verdict line still reads ADOPT from a premature decode-only read; the E2E + T2
+validation supersedes it to **REJECT-as-drop-in / fixable** — reconcile when item 29 is finalised.)*
+This item is **conditional**: item 29 found the decode/cache win does NOT survive to E2E wall-clock
+and the fix rebuilds mlx-lm-equivalent scaffolding, so **net benefit is currently ≤ 0** — pursue
+only if that calculus changes (faster host, upstream omlx gemma4 fix, or a workload where omlx's
+prefix cache pays off). Documented now so the path is ready.
+
+### Failure-mode → proposed resolution (programmatic-first)
+
+> **Category 1 — omlx output-parser bugs (omlx-specific; mlx-lm = 0). RESOLUTION: PROGRAMMATIC.**
+- **A. `<eos>`/`<end_of_turn>` leak** (dominant: 10/18 MTP, 7/15 noMTP turns). Root: gemma4 output
+  parser built with `stop_token_ids=set()` and `process_token` detokenises specials to literal text
+  (`adapter/output_parser.py:559`, `adapter/gemma4.py:452`).
+  **Programmatic (preferred):** repair proxy strips `<eos>`/`<end_of_turn>` from `content`
+  (validated, `scripts/omlx_repair_proxy.py` → leak 7/15→0/15). **Alt (more invasive):** patch the
+  vendored gemma4 parser to populate `stop_token_ids` / skip-special-tokens (validated,
+  `scratchpad/omlx-gemma4-eos-patch.diff`) — fragile across upgrades; **best:** file upstream.
+- **B/C. tool-call emitted as text** (`print(grep(...))`, `grep pattern="x" include="y"`).
+  **Programmatic:** repair proxy regex-parses these into structured `tool_calls` + sets
+  `finish_reason=tool_calls` (validated). Tool names derived per-request from the `tools` array.
+
+> **Category 2 — omlx input-formatting degradation (omlx-specific; mlx-lm = 0). RESOLUTION:
+> PROGRAMMATIC root-fix preferred; PROMPT steering as the proven interim.**
+- **D. Narration** (`[grep is used to find …]` instead of a call) — the dominant residual; root =
+  omlx's gemma4 chat-template / `extract_gemma4_messages` presenting tools/​history with
+  non-standard `<|channel>`/`<turn|>` markers that don't match this checkpoint's template, degrading
+  tool-calling. **Programmatic (root-fix, harder):** correct omlx's gemma4 input formatting — feed
+  the model's actual `chat_template.jinja` / a faithful tool-presentation (so the model emits real
+  calls). **Prompt (proven interim):** additive steering rules "emit real tool calls, never narrate
+  or code them" (validated, `harness_micro_configs/omlx-toolsteer.json` → narration 4→~0).
+- **E. Empty / eos-only turn** (turn is just `<eos>` → empty after strip). **Programmatic:** covered
+  by the proxy's eos-strip + (stretch) detect an empty post-strip turn with no tool call and treat
+  as continue rather than a final answer. Prompt steering reinforces.
+- **G. Under-engagement** (stops after 1 `grep`, never `read`s). **Prompt (primary):** steering
+  "always `grep` then `read` the exact lines before answering" (validated → 7→3/25). Programmatic
+  detection of answer-without-read is risky → leave to prompt.
+
+> **Category 3 — shared weak-Gemma model quality (NOT omlx-specific; present on mlx-lm too).
+> RESOLUTION: PROMPT (a quality lever for BOTH backends), light programmatic only if safe.**
+- **H. Over-verbose grep** (greps a whole natural-language description → "No matches" → refines).
+  **Prompt:** "grep a short keyword/identifier, not a sentence." (Self-correcting; affects both
+  backends — out of scope for omlx-parity but a general win.) Avoid programmatic pattern-rewriting
+  (risks changing intent).
+- **I. Redundant calls** (identical `read` twice). **Prompt:** "don't repeat a call you already
+  made." Programmatic consecutive-dedup is possible but risks breaking legitimate re-reads → prompt.
+
+> **Cross-cutting — 16 GB memory wall. RESOLUTION: PROGRAMMATIC.** The steering prompt enlarges the
+> context; with the prefix cache ON it **OOM'd omlx's memory-guard → prefill rejected → collapse to
+> 0.0** (same class as item 24). **Programmatic:** run `--no-cache` (validated stable: 0 prefill
+> rejections; but surrenders the 5.6× prefix-cache win) OR cap `--hot-cache-max-size` / tune
+> `--memory-guard` / bound the injected prompt. Record the cache-vs-stability tradeoff.
+
+### Design decisions (to resolve in plan-review)
+
+- **Programmatic > prompt** is the hard preference; every prompt lever must be **additive** (rules
+  layered via `mlx-gemma-rules.md`), never a replacement (item-18 REJECT precedent).
+- **Proxy vs vendored-patch for Category 1:** default to the **proxy** (`omlx_repair_proxy.py`,
+  upgrade-safe, mirrors `mlx_repair_proxy.py`); the package patch is a fallback / upstream-PR seed.
+- **Category-2 root fix vs prompt:** decide whether to invest in correcting omlx's gemma4 input
+  formatting (programmatic, robust, removes the narration cause) or ship the prompt interim. The
+  prompt got to 0.78; the root fix is what could close the last ~0.10 to mlx-lm.
+- **Scope gate:** only pursue if item 29's net-benefit calculus flips (see Why now).
+
+### Tasks
+
+- [x] **Cat 1 (programmatic) — DONE.** Hardened `scripts/omlx_repair_proxy.py` (eos-strip +
+      native/code/keyval tool-call parsing + SSE re-emit + BrokenPipe-safe); `scripts/omlx.sh`
+      controller + `make omlx-{pull,up,down,status,serve}`; `OMLX_PROXY_*` env; 17 unit tests
+      (`omlx_repair_proxy_test.py`); `make check` green. Classifier shows Cat-1 modes A/B/C = 0.
+      (Upstream gemma4 `stop_token_ids` PR not filed — proxy is the upgrade-safe fix.)
+- [x] **Cat 2 (root-fix) — DONE, but the root cause was NOT input formatting.** Captured + diffed
+      omlx's rendered prompt: omlx already uses the checkpoint `chat_template.jinja` correctly. Real
+      cause = **serving-temperature confound** (omlx 1.0 vs mlx-lm 0.0 default). Fix = programmatic
+      **temp-parity stamp** in the proxy → narration (mode D) = 0, T2 → 1.0. Input-side + programmatic.
+- [x] **Cat 2/3 (prompt) — RESOLVED: unnecessary.** temp-parity alone reaches 1.0; `omlx-toolsteer.json`
+      kept but NOT default. Fix is omlx-proxy-only ⇒ mlx-lm untouched (no regression to test).
+- [x] **Memory (programmatic) — DONE: prefix cache ON + swept.** 0 prefill rejections K=5; cache
+      sweep → ~27–35× warm re-prefill, stable; tuned defaults (hot=2GB, `initial-cache-blocks=512`,
+      guard=safe). `--no-cache` remains the anchor (`OMLX_CACHE=0`).
+- [x] **Validate — DONE (T2).** T2 K=5 omlx+temp-parity **1.000** (spread 0.000) ≥ mlx-lm 0.882; 0
+      prefill rejections; Cat-1/Cat-2 modes 0. **SWE/T3 no-regression DEMONSTRATED** (after the
+      streaming-repair fix): omlx+fix engages T3 to step=10, terminates at 509s, FAIL (no-edit) = the
+      shared capability wall (same regime as mlx-lm 0/8), not a mechanical hang. The forced-non-streaming
+      step=0 hang was fixed by `OMLX_PROXY_STREAM_REPAIR` (default on); T2 stays 1.0.
+
+### Measurement plan
+
+- **Primary:** T2 micro check-frac, omlx+fix vs mlx-lm baseline, **K≥5**, memory-stable (0 prefill
+  rejections). **Adopt-parity bar:** omlx+fix mean within the mlx-lm K-run spread of 0.88.
+- **Per-mode telemetry:** the `scratchpad/failure_modes.py` classifier (modes A–I) must show
+  Categories 1–2 at **0** (parity with mlx-lm) post-fix; H/I may persist (shared model quality).
+- **Secondary:** SWE/T3 no-regression vs mlx-lm; decode tok/s + E2E wall recorded but NOT the bar
+  (item 29: E2E wall is trajectory-dominated).
+- **Gate:** `make check` green for proxy/controller code; structural offline guarantee preserved.
+
+### Documentation
+
+- **Update** `docs/item24-feasibility-notes.md` (omlx section) with the per-mode fix results.
+- **Update** `CHANGELOG.md` on close; reconcile item 29's verdict line.
+- **Update** memory `item29-omlx-backend-probe` with the fix outcome + the reusable repair-proxy pattern.
+
+**Gate.** Programmatic-first; prompt levers additive only. local/offline + 16 GB-fit preserved
+(`--no-cache` or capped cache); frozen Gemma weights byte-identical (lossless); `make check` green
+for any proxy/serve/harness code touched.
+
+### 29. Investigate omlx as an MLX alternative for local model inference  ✅ CLOSED 2026-06-29 → `CHANGELOG.md`
+
+> **CLOSED — verdict (i) ADOPT: omlx + VLM-MTP speculative decoding (block_size=3) is +37 % over
+> mlx-lm at tool-call parity + lossless output; integration deferred.**
+> **Stage 1 (cheap fast-exit gate) PASSED all four checks:** (a) omlx (`jundot/omlx` v0.4.4,
+> brew-vendored, Apache-2.0) loaded the **byte-identical** pinned `gemma-4-E4B-it-qat-4bit`
+> safetensors in-place — no GGUF/re-quant (`model-00002` sha256 == git-LFS manifest oid); (b)
+> `/v1/models` + OpenAI `/v1/chat/completions` valid; (c) **native `gemma4` tool-call parser** →
+> clean full round-trip, **no repair proxy** (refutes the README's Gemma-not-listed risk); (d)
+> **offline under blocked egress** — fresh load + tool-call with proxies/HF poisoned, `lsof` showed
+> only the loopback LISTEN, **zero outbound**. **Stage 2 (decode tok/s A/B; slope method, K=5, same
+> weights, proxy-free, serialized same-machine):** plain backend swap = mlx-lm 11.09–11.39 vs omlx
+> 12.98 (`safe`, **+17 %**) — below the 20 % bar on its own. **Tuning A/Bs flipped the verdict:**
+> **(A-1) tiered prefix cache** (`--paged-ssd-cache-dir`+`--hot-cache-max-size` vs `--no-cache`) cuts
+> warm re-prefill **13.38 s → 2.40 s (~5.6×)** on a repeated ~3.2 k-token prefix (the item-24 agentic
+> wall; on by default). **(A-2) VLM-MTP speculative decoding** with the matched
+> `mlx-community/gemma-4-E4B-it-qat-assistant-bf16` drafter (4-layer MTP head; 6-bit crashed on a
+> quant-embedding reshape, **bf16 works**): block-size sweep OFF 12.98 · bs1 ~3.08 (degenerate) · bs2
+> 14.88 · **bs3 15.63 (optimum)** · bs4/default 12.99 (flat) → **bs=3 = +20 % over plain omlx, +37 %
+> over mlx-lm**, **lossless** (target verifies @ temp 0) + **tool-call parity holds**. **Fairness
+> check:** mlx-lm 0.31.3 has `--draft-model` but **can't load any available gemma-4 draft** —
+> the standalone `gemma-4-e2b-it-4bit` is multimodal and trips its loader (`140 parameters not in
+> model`, the item-24 wall, across `--num-draft-tokens` 2/3/4); MTP heads run only via mlx-vlm
+> (omlx's path). So omlx's win is its **integrated, working MTP path**, not a proven raw-kernel gap;
+> plain swap is +17 %. **`make omlx-up` + `restart_server` generalization + `make check` DEFERRED**
+> (document-now decision). Deliverables: the byte-identical serving-backend A/B pattern +
+> `scratchpad/{decode_bench,prefix_cache_bench}.py`; adopt config = drafter via
+> `~/.omlx/model_settings.json` (`vlm_mtp_enabled`, `vlm_mtp_draft_block_size=3`). Full detail:
+> `CHANGELOG.md` + `docs/item24-feasibility-notes.md`. item 24's no-model-swap closure stands
+> (weights bit-identical; speculative decoding is lossless).
+
+**Goal.** Evaluate **omlx** (https://github.com/jundot/omlx) as a possible replacement for the
+current `mlx`/`mlx-lm` serving path used by the local harness. Decide whether it offers a real
+advantage (latency, memory/KV-cache behaviour, tool-calling fidelity, OpenAI-API compatibility,
+stability under serialized relaunch) over the present `make mlx-up` stack.
+
+**Why now.** Item 24.3 (CLOSED, verdict (iii)) showed the 4–9B model wall on this 16 GB M1 is
+**wall-clock/latency-bound, not capability-bound** (Qwen3.5 timed out 29–33/33 at 600 s; the OOM
+fix required hand-rolled `MLX_SERVER_EXTRA_ARGS` cache caps + a `/v1/models` model-guard + a
+`/tmp/py-shim`). The current MLX stack also has a known python-wedge gotcha on `make mlx-up`
+(libintl.8.dylib from a broken pyenv). If omlx serves the same GGUF/MLX weights with lower
+latency or saner KV-cache/prompt-cache management, it could materially move the latency wall that
+item 24 hit — without changing the model. This is an **infrastructure** investigation, not a
+model-capability one.
+
+**Scope / questions to resolve.**
+- What is omlx? (apparent: an Ollama-style wrapper / server over MLX.) License, maturity, last
+  release, dependency footprint, and whether it runs fully **offline / 16 GB-fit** (the harness's
+  hard gate — `gepa_assert_serving_offline`).
+- Does it expose an **OpenAI-compatible** `/v1/chat/completions` (+ `/v1/models`) endpoint the
+  existing `external_provider` / passthrough-proxy path can target with **zero or minimal** harness
+  changes? Does it support the chat-template / thinking-off control item 24.2 needed
+  (`MLX_CHAT_TEMPLATE_ARGS` equivalent)?
+- **Tool-calling fidelity:** does it emit valid tool-call round-trips for Gemma-4-E4B (the frozen
+  baseline) — the reliability floor every candidate must pass.
+- **The latency/memory thesis:** does it cap KV/prompt-cache growth natively (the item-24 OOM
+  root cause) and is per-token / time-to-first-token faster than `mlx-lm` on this M1?
+
+**Method (Evidence policy — verify locally, [lit-only] until measured).**
+1. Read the omlx README/docs; record claims as **[lit-only]** (memory: `verify-claims-on-local-harness`).
+2. Stand it up against the **frozen Gemma-4-E4B QAT** baseline (no model change) and smoke-test:
+   serve → `/v1/models` guard → one tool-call round-trip → 1–2 harness instances.
+3. If the smoke test passes, run a small **K≥3 A/B vs the current `mlx-lm` serve** on the L0/T2 set,
+   primary metric = **wall-clock / time-to-first-edit / timeout-rate** (the item-24 wall), secondary
+   = pass-rate parity (must not regress) + OOM rate. Reuse the serialized-relaunch infra from
+   `scratchpad/run_24_3_*_serialized.sh`.
+
+### Design decisions (resolved — plan-review 2026-06-29)
+
+- **Top priority → cost & feasibility.** This is a cheap, time-boxed *infra* probe. Item 24 already
+  re-justified frozen Gemma (the 4–9B wall is wall-clock/latency-bound on this 16 GB M1), so the
+  prior on omlx winning is low; the default expected outcome is verdict (ii). Do not let it balloon.
+- **Weights are bit-frozen; only the serving *engine* is opened — narrowly.** omlx must load the
+  **exact pinned `mlx-community/gemma-4-E4B-it-qat-4bit` safetensors at rev `0f35c6f6…`,
+  byte-identical** (same files mlx-lm serves; verify by sha256 against the `mlx.sh` pull manifest).
+  *If omlx cannot load those byte-identical safetensors — e.g. it requires GGUF / a re-quant — that
+  is an automatic verdict (iii)* (a re-quant would reopen item 24's quant-confound and the
+  no-model-swap closure, which we are NOT reopening). Reconcile the fixed-constraints wording: the
+  engine-freeze is opened **only** for this scoped serving-backend probe with the model staying
+  bit-identical, so item 24's model-swap closure stands.
+- **Latency thesis + adopt threshold (verdict i).** Primary metric = **decode tok/s (per-token
+  throughput)** on the *same weights*. Adopt only if omlx is **meaningfully faster — default
+  threshold ≥ 20 %** — AND at **tool-call parity** AND **pass-rate parity (no regression)**. Because
+  the MLX inference *core* is shared, decode tok/s is expected to be ~flat → **expect (ii)**; a real
+  ≥20 % decode win would be the surprising, adopt-worthy result. (TTFT/prefill and timeout-rate are
+  recorded as *secondary* signals, not the adopt trigger.)
+- **Two-stage with a cheap Stage-1 fast-exit (cost/feasibility wins).** Run a cheap smoke gate
+  BEFORE any A/B investment, and only invest in the K≥3 A/B on a clean PASS. *(This reverses an
+  earlier "go straight to full A/B" choice — the user revisited the cost/feasibility-vs-staging
+  tension and resolved it in favour of staging.)* **Stage 1 (gate):** omlx (a) serves the
+  byte-identical pinned `gemma-4-E4B-it-qat-4bit` safetensors (sha256 vs the `mlx.sh` pull manifest),
+  (b) passes the `/v1/models` guard + exposes an OpenAI-compatible `/v1/chat/completions`, (c)
+  completes ONE clean tool-call round-trip with Gemma-4-E4B, and (d) is offline-asserted under
+  blocked egress (the structural hub-offline guarantee). **FAIL ANY Stage-1 check → automatic
+  verdict (iii), document why, STOP — no A/B.** **Stage 2 (full A/B):** only on a clean Stage-1
+  PASS, run the K≥3 decode-tok/s A/B vs `mlx-lm` with the serialized-relaunch infra and the ≥20 %
+  adopt threshold at tool-call + pass-rate parity. All auto-verdict-(iii) short-circuits now route
+  through Stage 1.
+- **Offline assertion for a non-`mlx.sh` backend.** `gepa_assert_serving_offline` is **config-level
+  only** (it rejects `external_provider`/`model_ref`/`base_url` in the optimisee config; it cannot
+  see a new backend's network egress). So omlx needs its own **structural** offline guarantee
+  equivalent to `mlx.sh`'s `HF_HUB_OFFLINE=1` + `uvx --offline` (no model-hub, no PyPI egress at
+  serve time): pin + vendor the omlx binary/deps offline, set the hub-offline env, and **verify by
+  running the smoke under blocked egress** (network blackhole / deny-all) — serving must still
+  succeed. A backend that cannot serve under blocked egress is an automatic verdict (iii).
+
+### Verdict gates (all closing)
+
+- (i) **adopt** — Stage 1 PASS AND in Stage 2 omlx is **decode tok/s ≥ 20 % faster** than tuned
+  `mlx-lm` at tool-call + pass-rate parity (16 GB-fit) → wire a `make omlx-up` target + generalize
+  the harness restart path (see tasks).
+- (ii) **partial** — Stage 1 PASS but Stage 2 shows **no ≥20 % decode win** over tuned `mlx-lm`
+  cache caps (the expected outcome) → document, keep MLX.
+- (iii) **reject** — **any Stage-1 check fails**: cannot load the byte-identical safetensors (needs
+  GGUF/re-quant), OR fails the `/v1/models`/`/v1/chat/completions` guard, OR fails the tool-call
+  round-trip, OR fails the offline-under-blocked-egress check → record why in
+  `docs/item24-feasibility-notes.md` and `CHANGELOG.md` and **STOP (no A/B)**.
+
+### Tasks
+
+- [x] Read the omlx README/docs; recorded as **[lit-only]** — Apache-2.0, v0.4.4 (2026-06-16),
+      brew-vendored, MLX+mlx-lm+mlx-vlm core, native safetensors, OpenAI `/v1/{models,chat,completions}`,
+      tiered hot-RAM/cold-SSD KV cache. (`docs/item24-feasibility-notes.md`.)
+- [x] **Stage 1 — cheap fast-exit gate: clean PASS on all four checks** (none failed ⇒ no (iii)):
+  - [x] (a) omlx loaded the **byte-identical** pinned `gemma-4-E4B-it-qat-4bit` safetensors in-place —
+        no GGUF/re-quant; `model-00002` sha256 `5c5715…d58d8c` == the git-LFS manifest oid.
+  - [x] (b) `/v1/models` guard passes AND OpenAI `/v1/chat/completions` returns valid JSON.
+  - [x] (c) clean tool-call round-trip — omlx's **native `gemma4` parser** emitted
+        `get_weather{"city":"Paris"}` + full round-trip, **no repair proxy** needed.
+  - [x] (d) offline under **blocked egress** — fresh load + tool-call with proxies/HF poisoned;
+        `lsof -a -p <pid> -iTCP` showed only the loopback LISTEN, **zero outbound**.
+- [x] **Stage 2 — decode tok/s A/B.** Plain backend swap: mlx-lm **11.09–11.39** vs omlx **12.98**
+      (`safe`, **+17 %**) / 12.49 (`aggressive`) — below the 20 % bar; `aggressive≈safe` ⇒
+      MLX-kernel-bound (`scratchpad/decode_bench.py`, K=5 slope, serialized same-machine).
+  - [x] **Tuning A/B-1 — tiered prefix cache** (`--paged-ssd-cache-dir`+`--hot-cache-max-size` vs
+        `--no-cache`, `scratchpad/prefix_cache_bench.py`): warm re-prefill **13.38 s → 2.40 s (~5.6×)**
+        on a repeated ~3.2 k-token prefix (agentic wall-clock; cached 2048/2428; on by default).
+  - [x] **Tuning A/B-2 — VLM-MTP speculative decoding** (matched `gemma-4-E4B-it-qat-assistant-bf16`
+        drafter via `~/.omlx/model_settings.json`): block-size sweep OFF 12.98 · bs1 ~3.08 (degenerate)
+        · bs2 14.88 · **bs3 15.63 (optimum)** · bs4 12.99 → **bs=3 = +20 % vs plain omlx, +37 % vs
+        mlx-lm**, lossless (temp 0) + tool-call parity holds.
+  - [x] **Fairness check:** mlx-lm 0.31.3 `--draft-model` can't load any gemma-4 draft (multimodal
+        `140 params not in model` wall, across `--num-draft-tokens` 2/3/4) ⇒ omlx's MTP path is the
+        deciding advantage.
+  - [x] Verdict scored: **omlx+MTP-bs3 +37 % ≥ 20 % bar at parity + lossless → (i) ADOPT** (plain swap
+        +17 % alone would be (ii)).
+- [~] **On verdict (i): wire `make omlx-up` + generalize `restart_server` + `make check` — DEFERRED**
+      (document-now decision; follow-up). No harness/serve code touched yet ⇒ no `make check` gate.
+
+### Measurement plan
+
+- **Stage 1 (gate, no A/B):** binary smoke checks only — byte-identical safetensors load
+  (sha256), `/v1/models` + `/v1/chat/completions` reachable, one clean tool-call round-trip,
+  serving succeeds under blocked egress. Any fail ⇒ verdict (iii), STOP. Cheap by design (no
+  rollouts) so a doomed backend never reaches the costly A/B.
+- **Stage 2 — baseline:** current `mlx-lm 0.31.3` serving the pinned Gemma-4-E4B QAT safetensors via
+  `make mlx-up` (with the item-24 cache caps), run in the **same session/machine** as the omlx arm.
+- **Stage 2 — single lever varied:** the serving backend (mlx-lm → omlx). Model weights, subset,
+  sampling, proxy posture, and timeout held fixed.
+- **Stage 2 — signal:** primary = **decode tok/s** (adopt iff ≥ 20 % faster); secondary =
+  TTFT/prefill, timeout-rate, OOM rate; both arms run **K≥3** on the 8-instance L0 set; pass-rate
+  must not regress and any delta must clear the K-run spread (MLX/Metal nondeterminism — no seed
+  fixes it).
+- **Adopt/reject:** the (i)/(ii)/(iii) gates above (Stage-1 fail ⇒ (iii) before any A/B). Evidence
+  policy: omlx README claims stay **[lit-only]** until measured locally; expected default is **(ii)**
+  (shared MLX core).
+- **`make check`** (ruff + mypy + pytest, incl. the `harness_eval.py` selftest) green for any
+  harness/serve code touched before any adopt.
+
+### Documentation
+
+- **Update** `docs/item24-feasibility-notes.md` — append the omlx serving-backend probe result.
+- **Update** `CHANGELOG.md` — record the closing verdict.
+- **Update** `docs/opencode-local.md` (master doc) + `Makefile`/README mlx-target table — only if
+  verdict (i) ships a `make omlx-up` target.
+- **Update** memory `verify-claims-on-local-harness` if the probe yields a reusable backend-A/B
+  pattern.
+
+**Gate.** local/offline + 16 GB-fit asserted by **structural offline guarantee + blocked-egress
+smoke** (config-level `gepa_assert_serving_offline` alone is insufficient for a non-`mlx.sh`
+backend); frozen Gemma weights **byte-identical** (no model swap — CLOSED by item 24; the
+engine-freeze is opened only for this scoped serving-backend probe); `make check` green for any
+harness/serve code touched.
 
 ### 18. Improvement-recommender agent  ✅ CLOSED 2026-06-26 → `CHANGELOG.md`  (was drafted as "13")
 

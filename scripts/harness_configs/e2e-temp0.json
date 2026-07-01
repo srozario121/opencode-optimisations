@@ -1,0 +1,8 @@
+{
+  "name": "e2e-temp0",
+  "description": "item 29 E2E wall-clock control: IDENTICAL to baseline (stock opencode + token-reduced read/grep tools + repair proxy on mlx-lm / native tool-calls on omlx) EXCEPT sampling temperature pinned to 0 (greedy). The single purpose is to make the two serving backends (omlx+MTP-bs3 vs mlx-lm) follow near-identical trajectories so per-instance episode_wall_s becomes a clean decode-speed delta instead of being trajectory-dominated by temp>0 sampling divergence. MLX/Metal nondeterminism still leaves minor residual divergence (no seed fixes it). No system-prompt / tool / opencode-config changes vs baseline.",
+  "opencode_config": {},
+  "env": {},
+  "sampling": {"temperature": 0},
+  "system_prompt": null
+}

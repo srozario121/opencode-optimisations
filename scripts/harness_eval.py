@@ -84,6 +84,22 @@ from dataclasses import asdict, dataclass, field
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MLX_SH = os.path.join(REPO_ROOT, "scripts", "mlx.sh")
+# Serving-backend controller used for OOM self-heal (restart_server). Defaults to
+# the mlx-lm stack; set HARNESS_SERVE_BACKEND=omlx (item 30) to bounce the omlx
+# stack instead. Any other value is treated as a path to a controller script
+# exposing `down`/`up` verbs (mirrors mlx.sh's CLI).
+_SERVE_BACKEND = os.environ.get("HARNESS_SERVE_BACKEND", "mlx")
+_BACKEND_SCRIPTS = {
+    "mlx": MLX_SH,
+    "omlx": os.path.join(REPO_ROOT, "scripts", "omlx.sh"),
+}
+SERVE_SH = _BACKEND_SCRIPTS.get(_SERVE_BACKEND, _SERVE_BACKEND)
+# item 31: during a clean-serving isolation run the external wrapper owns the
+# whole server lifecycle (down → clear cache → up → health-gate), so the harness
+# must NOT bounce the server mid-pass — an OOM self-heal restart here would race
+# opencode's next call (the item-30 server-reload race that produced a "0 requests
+# for the whole episode" hang). Set HARNESS_NO_MIDRUN_RESTART=1 to suppress it.
+_NO_MIDRUN_RESTART = os.environ.get("HARNESS_NO_MIDRUN_RESTART", "0") != "0"
 SUBSET_MANIFEST = os.path.join(REPO_ROOT, "scripts", "harness_eval_subset.json")
 CONFIGS_DIR = os.path.join(REPO_ROOT, "scripts", "harness_configs")
 
@@ -339,10 +355,13 @@ def online_preflight(model_ref: str, timeout: float = 120.0) -> bool:
 
 
 def restart_server(base_url: str, wait_s: float = 180.0) -> bool:
-    """Bounce the MLX stack via scripts/mlx.sh and wait for health. Returns ok."""
-    print("  [recover] restarting MLX server via scripts/mlx.sh …", flush=True)
-    _run(["bash", MLX_SH, "down"], timeout=120)
-    _run(["bash", MLX_SH, "up"], timeout=600)
+    """Bounce the serving stack via its controller and wait for health.
+
+    Backend selected by HARNESS_SERVE_BACKEND (default mlx → scripts/mlx.sh;
+    omlx → scripts/omlx.sh). Returns ok."""
+    print(f"  [recover] restarting {_SERVE_BACKEND} server via {SERVE_SH} …", flush=True)
+    _run(["bash", SERVE_SH, "down"], timeout=120)
+    _run(["bash", SERVE_SH, "up"], timeout=600)
     deadline = time.time() + wait_s
     while time.time() < deadline:
         if server_healthy(base_url):
@@ -779,6 +798,15 @@ def run_opencode_episode(checkout: str, spec: InstanceSpec, model_ref: str,
     in that case E0 metrics are synthesized from the streamed stderr.
     """
     prompt = PROMPT_TEMPLATE.format(repo=spec.repo, problem=spec.problem)  # type: ignore[attr-defined]
+    # item 31.3 (gated): append extra guidance to the TASK prompt — the message the
+    # weak 4B actually attends to (the AGENTS.md `rules_append` channel was ignored in
+    # iteration 1). Used to (a) place the reproduce-first directive proximally and/or
+    # (b) inject a precomputed reproduction traceback to isolate authoring capability
+    # from localization. Off by default → every other item's prompt is byte-unchanged.
+    _extra = os.environ.get("HARNESS_PROMPT_APPEND_FILE", "")
+    if _extra and os.path.exists(_extra):
+        with open(_extra) as _f:
+            prompt = prompt + "\n\n" + _f.read()
     cmd = ["opencode", "run", "--format", "json", "--print-logs",
            "--log-level", "INFO", "-m", model_ref, "--dir", checkout, prompt]
     os.makedirs(run_dir, exist_ok=True)
@@ -984,6 +1012,19 @@ def score_instance(spec: InstanceSpec, model_ref: str, cfg: dict, base_url: str,
     run_dir = os.path.join(RUNS_DIR, label, spec.instance_id)
     checkout = clean_checkout(spec)
     env = apply_levers(checkout, cfg, model_ref, base_url)
+    # item 31.3 (repro-first lever enabler): optionally prepend the instance's
+    # prepared venv (the repo installed editable) to the agent's PATH so the model
+    # can RUN a reproduction script and read the real traceback to localize the bug
+    # — the host `python3` is the broken-pyenv shim (libintl.8.dylib wedge), so
+    # without this the agent's `python` dies on a dyld error before it ever reaches
+    # the failure. Gated + off by default, so every other item's baseline is
+    # byte-for-byte unchanged. HARNESS_VENV_PY also names the interpreter explicitly.
+    if os.environ.get("HARNESS_AGENT_VENV_ON_PATH", "0") != "0":
+        venv_bin = os.path.join(ENVS_DIR, spec.instance_id, "bin")
+        if os.path.isdir(venv_bin):
+            env["PATH"] = venv_bin + os.pathsep + env.get(
+                "PATH", os.environ.get("PATH", ""))
+            env["HARNESS_VENV_PY"] = os.path.join(venv_bin, "python")
     # item 22: the online arm runs with the local MLX endpoint OFF, so the
     # OOM-vs-timeout disambiguation (which probes `base_url`) is meaningless and
     # would mislabel every timeout as `oom`. Skip the local health probes.
@@ -2579,8 +2620,11 @@ def _score_subset(subset: list[InstanceSpec], model_ref: str, cfg: dict,
         mark = "PASS" if r.passed else "FAIL"
         print(f"  -> {mark} ({r.reason})  episode={r.episode_wall_s}s  "
               f"F2P={r.fail_to_pass_passed}/{r.fail_to_pass_total}", flush=True)
-        if r.reason == "oom" and not external:
+        if r.reason == "oom" and not external and not _NO_MIDRUN_RESTART:
             restart_server(base_url)
+        elif r.reason == "oom" and _NO_MIDRUN_RESTART:
+            print("  [isolation] OOM but HARNESS_NO_MIDRUN_RESTART=1 — leaving the "
+                  "server to the external wrapper (no mid-run bounce)", flush=True)
     return results
 
 
@@ -2787,6 +2831,9 @@ def cmd_selftest(args: argparse.Namespace) -> int:
 
     # 6. mlx.sh present (restart path target)
     check("scripts/mlx.sh exists", os.path.exists(MLX_SH))
+    # 6b. omlx.sh present + the backend selector resolves to a real controller
+    check("scripts/omlx.sh exists", os.path.exists(_BACKEND_SCRIPTS["omlx"]))
+    check("serve-backend resolves", os.path.exists(SERVE_SH))
 
     # 7. sampling forwarding (item 16 / E-sampling): the whole `sampling` block —
     #    including non-OpenAI keys like `repetition_penalty` (L1) — must land
